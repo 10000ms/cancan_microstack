@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Caddy 网关管理 / Caddy Gateway — Cancan Microstack</title>
+<meta name="description" content="Manage Caddy through opsbffsrv: route CRUD and batch sync, rate limits with IP allow/deny lists, certificate lifecycle, traffic statistics, and access-log analysis.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="caddy">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">Caddy 网关管理</span><span class="en">Caddy Gateway</span></h1>
+    <p class="page-lead">
+      <span class="zh">通过 <code>opsbffsrv</code> 管理 Caddy 的<strong>路由、限流、证书、统计与访问日志分析</strong>。配置写在数据库里，由 <code>sync</code> 编译成 Caddy JSON 经 Admin API 下发，访问日志与流量则采集回库供查询。</span>
+      <span class="en">Manage Caddy's <strong>routes, rate limits, certificates, statistics and access-log analysis</strong> through <code>opsbffsrv</code>. Config lives in the database, is compiled into Caddy JSON by <code>sync</code> and pushed via the Admin API, while access logs and traffic are collected back for querying.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#routes"><span class="zh">路由管理</span><span class="en">Routes</span></a>
+      <a href="#rate-limits"><span class="zh">速率限制</span><span class="en">Rate limits</span></a>
+      <a href="#certificates"><span class="zh">证书管理</span><span class="en">Certificates</span></a>
+      <a href="#stats"><span class="zh">访问统计</span><span class="en">Statistics</span></a>
+      <a href="#logs"><span class="zh">访问日志分析</span><span class="en">Access-log analysis</span></a>
+    </div>
+
+    <p class="muted"><span class="zh">下文所有路径以 <code>/v1/opsbffsrv/</code> 为前缀；路径中的 <code>{…}</code> 为占位参数。</span><span class="en">All paths below are prefixed with <code>/v1/opsbffsrv/</code>; <code>{…}</code> in a path is a placeholder parameter.</span></p>
+
+    <section id="routes">
+      <h2><span class="zh">路由管理</span><span class="en">Route management</span></h2>
+      <p class="section-sub"><span class="zh">把"哪个域名 + 路径 → 哪个上游"建模成路由记录，再批量同步给 Caddy。</span><span class="en">Model "which domain + path → which upstream" as route records, then batch-sync them to Caddy.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>POST / GET</td><td><code>caddy/routes</code></td><td><span class="zh">创建路由 / 列出全部路由</span><span class="en">Create a route / list all routes</span></td></tr>
+          <tr><td>GET / PUT / DELETE</td><td><code>caddy/routes/{route_id}</code></td><td><span class="zh">取 / 改 / 删单个路由</span><span class="en">Get / update / delete one route</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/routes/{route_id}/toggle</code></td><td><span class="zh">启用 / 禁用切换</span><span class="en">Enable / disable toggle</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/routes/sync</code></td><td><span class="zh">把全部已启用路由编译并批量下发到 Caddy</span><span class="en">Compile all enabled routes and batch-apply to Caddy</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/routes/statistics</code></td><td><span class="zh">路由维度统计汇总</span><span class="en">Route-level statistics summary</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/routes/by-domain/{domain}</code></td><td><span class="zh">按域名查该域下的路由</span><span class="en">Look up routes under a domain</span></td></tr>
+        </tbody>
+      </table>
+      <h3><span class="zh">核心字段</span><span class="en">Core fields</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Field</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>route_name</code></td><td><span class="zh">路由名，唯一，1–100 字符</span><span class="en">Route name, unique, 1–100 chars</span></td></tr>
+          <tr><td><code>domain</code> / <code>path_pattern</code></td><td><span class="zh">匹配域名 + 路径模式（如 <code>/api/v1/*</code>）</span><span class="en">Matched domain + path pattern (e.g. <code>/api/v1/*</code>)</span></td></tr>
+          <tr><td><code>upstream_host</code> / <code>upstream_port</code></td><td><span class="zh">上游主机与端口（1–65535）</span><span class="en">Upstream host and port (1–65535)</span></td></tr>
+          <tr><td><code>upstream_service</code></td><td><span class="zh">上游服务标识，便于按服务聚合统计</span><span class="en">Upstream service id, for per-service stats</span></td></tr>
+          <tr><td><code>priority</code></td><td><span class="zh">匹配优先级 0–1000，默认 100</span><span class="en">Match priority 0–1000, default 100</span></td></tr>
+          <tr><td><code>load_balance_strategy</code></td><td><span class="zh">负载均衡策略，默认 <code>round_robin</code></span><span class="en">Load-balance strategy, default <code>round_robin</code></span></td></tr>
+          <tr><td><code>strip_path_prefix</code> / <code>add_path_prefix</code></td><td><span class="zh">转发前剥除 / 追加路径前缀（重写）</span><span class="en">Strip / add a path prefix before forwarding (rewrite)</span></td></tr>
+          <tr><td><code>enable_https</code> / <code>force_https</code></td><td><span class="zh">是否启用 HTTPS / 强制重定向，默认均为 true</span><span class="en">Enable HTTPS / force redirect, both default true</span></td></tr>
+          <tr><td><code>enable_waf</code> / <code>waf_rule_set</code></td><td><span class="zh">是否挂 WAF（Coraza）及规则集，默认 <code>default</code></span><span class="en">Attach WAF (Coraza) and ruleset, default <code>default</code></span></td></tr>
+          <tr><td><code>health_check_path</code> / <code>health_check_interval</code></td><td><span class="zh">上游主动健康探测路径 / 间隔（秒，≥5，默认 30）</span><span class="en">Active upstream probe path / interval (sec, ≥5, default 30)</span></td></tr>
+          <tr><td><code>is_enabled</code></td><td><span class="zh">是否启用；只有启用的路由会被 <code>sync</code> 下发</span><span class="en">Enabled flag; only enabled routes are pushed by <code>sync</code></span></td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <span class="zh"><strong>两阶段生效。</strong>CRUD 只写配置库；真正改变 Caddy 行为的是 <code>routes/sync</code>。同步是<strong>分组替换</strong>：只重建本系统托管的路由组（<code>cancan_managed_routes</code>），保留 Caddy 上的非托管路由与兜底 404 路由，再整体 <code>load</code> 回 Caddy Admin API。若 Caddy 缺 WAF 模块，会自动剥除 WAF 处理器后重试。</span>
+        <span class="en"><strong>Two-phase apply.</strong> CRUD only writes the config DB; what actually changes Caddy is <code>routes/sync</code>. The sync is a <strong>group replace</strong>: it rebuilds only this system's managed route group (<code>cancan_managed_routes</code>), preserves non-managed and the fallback 404 routes already on Caddy, and <code>load</code>s the whole config back via the Caddy Admin API. If Caddy lacks the WAF module, it strips the WAF handlers and retries automatically.</span>
+      </div>
+      <h3><span class="zh">编译出的 Caddy JSON（单条路由）</span><span class="en">Compiled Caddy JSON (one route)</span></h3>
+      <p><span class="zh">每条路由被 <code>build_route_config()</code> 编译成如下结构——<code>match</code> 匹配域名 / 路径，<code>handle</code> 依次串起 WAF、重写、反向代理（带主动健康检查）：</span><span class="en">Each route is compiled by <code>build_route_config()</code> into the shape below — <code>match</code> covers domain / path, and <code>handle</code> chains WAF, rewrite and reverse-proxy (with active health checks) in order:</span></p>
+      <pre><code>{
+  <span class="tok-s">"group"</span>: <span class="tok-s">"cancan_managed_routes"</span>,
+  <span class="tok-s">"match"</span>: [
+    { <span class="tok-s">"host"</span>: [<span class="tok-s">"api.example.com"</span>] },
+    { <span class="tok-s">"path"</span>: [<span class="tok-s">"/api/v1/*"</span>] }
+  ],
+  <span class="tok-s">"handle"</span>: [
+    { <span class="tok-s">"handler"</span>: <span class="tok-s">"coraza_waf"</span>,
+      <span class="tok-s">"directives"</span>: [<span class="tok-s">"Include /etc/caddy/waf/coraza.conf"</span>] },
+    { <span class="tok-s">"handler"</span>: <span class="tok-s">"rewrite"</span>,
+      <span class="tok-s">"strip_path_prefix"</span>: <span class="tok-s">"/api"</span> },
+    { <span class="tok-s">"handler"</span>: <span class="tok-s">"reverse_proxy"</span>,
+      <span class="tok-s">"upstreams"</span>: [{ <span class="tok-s">"dial"</span>: <span class="tok-s">"upstream.host:8080"</span> }],
+      <span class="tok-s">"health_checks"</span>: {
+        <span class="tok-s">"active"</span>: { <span class="tok-s">"path"</span>: <span class="tok-s">"/internal/health"</span>,
+                    <span class="tok-s">"interval"</span>: <span class="tok-s">"30s"</span>, <span class="tok-s">"timeout"</span>: <span class="tok-s">"5s"</span> }
+      } }
+  ],
+  <span class="tok-s">"terminal"</span>: <span class="tok-k">true</span>
+}</code></pre>
+      <p class="muted"><span class="zh"><code>terminal</code> 仅在 <code>enable_https</code> 且 <code>force_https</code> 时置 true；<code>rewrite</code> 处理器仅在配了路径前缀时出现；<code>coraza_waf</code> 仅在 <code>enable_waf</code> 时出现。</span><span class="en"><code>terminal</code> is set only when <code>enable_https</code> and <code>force_https</code>; the <code>rewrite</code> handler appears only with a path prefix; <code>coraza_waf</code> only when <code>enable_waf</code>.</span></p>
+    </section>
+
+    <section id="rate-limits">
+      <h2><span class="zh">速率限制</span><span class="en">Rate limits</span></h2>
+      <p class="section-sub"><span class="zh">基于匹配条件的限流规则，配合按规则维护的白 / 黑名单。</span><span class="en">Match-based throttling rules, with per-rule allow / deny lists.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>POST / GET</td><td><code>caddy/rate-limits</code></td><td><span class="zh">创建 / 列出限流规则</span><span class="en">Create / list rate-limit rules</span></td></tr>
+          <tr><td>GET / PUT / DELETE</td><td><code>caddy/rate-limits/{rule_id}</code></td><td><span class="zh">取 / 改 / 删单条规则</span><span class="en">Get / update / delete one rule</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/rate-limits/{rule_id}/toggle</code></td><td><span class="zh">启用 / 禁用切换</span><span class="en">Enable / disable toggle</span></td></tr>
+          <tr><td>POST / DELETE</td><td><code>caddy/rate-limits/{rule_id}/whitelist</code></td><td><span class="zh">增 / 删白名单 IP（豁免限流）</span><span class="en">Add / remove whitelist IPs (exempt from limit)</span></td></tr>
+          <tr><td>POST / DELETE</td><td><code>caddy/rate-limits/{rule_id}/blacklist</code></td><td><span class="zh">增 / 删黑名单 IP（始终拒绝）</span><span class="en">Add / remove blacklist IPs (always blocked)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/rate-limits/statistics</code></td><td><span class="zh">限流规则统计汇总</span><span class="en">Rate-limit statistics summary</span></td></tr>
+        </tbody>
+      </table>
+      <h3><span class="zh">核心字段</span><span class="en">Core fields</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Field</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>match_type</code> / <code>match_pattern</code></td><td><span class="zh">匹配维度：<code>path</code> / <code>domain</code> / <code>ip</code> / <code>header</code> / <code>all</code>，及对应模式</span><span class="en">Match dimension: <code>path</code> / <code>domain</code> / <code>ip</code> / <code>header</code> / <code>all</code>, plus its pattern</span></td></tr>
+          <tr><td><code>limit_type</code></td><td><span class="zh">限流类型：<code>request</code>（请求数）或 <code>bandwidth</code>（带宽），默认 <code>request</code></span><span class="en">Limit type: <code>request</code> or <code>bandwidth</code>, default <code>request</code></span></td></tr>
+          <tr><td><code>limit_value</code> / <code>limit_window</code></td><td><span class="zh">窗口内允许的额度（&gt;0）/ 时间窗（秒，≥1，默认 60）</span><span class="en">Allowance per window (&gt;0) / window length (sec, ≥1, default 60)</span></td></tr>
+          <tr><td><code>limit_key</code></td><td><span class="zh">限流主键：<code>ip</code> / <code>header</code> / <code>cookie</code> / <code>path</code>，默认 <code>ip</code></span><span class="en">Limit key: <code>ip</code> / <code>header</code> / <code>cookie</code> / <code>path</code>, default <code>ip</code></span></td></tr>
+          <tr><td><code>burst_size</code></td><td><span class="zh">突发额度，默认 0</span><span class="en">Burst allowance, default 0</span></td></tr>
+          <tr><td><code>block_status_code</code> / <code>block_message</code></td><td><span class="zh">触发限流时回应的状态码（默认 429）与消息体</span><span class="en">Status code (default 429) and body returned when throttled</span></td></tr>
+          <tr><td><code>whitelist_ips</code> / <code>blacklist_ips</code></td><td><span class="zh">白 / 黑名单 IP 数组；提交时做 IP 合法性校验</span><span class="en">White / black IP arrays; validated for IP format on submit</span></td></tr>
+          <tr><td><code>priority</code></td><td><span class="zh">规则优先级 0–1000，默认 100</span><span class="en">Rule priority 0–1000, default 100</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>限流由窗口 + 额度描述。</strong>本系统用 <code>limit_value</code> + <code>limit_window</code>（编译为 Caddy 的 <code>max_events</code> / <code>window</code>）表达"每窗口最多多少次"，并由 <code>limit_key</code> 决定按谁计数。白名单先于规则放行，黑名单始终拦截。</span>
+        <span class="en"><strong>Limits are described by window + allowance.</strong> The system expresses "at most N per window" via <code>limit_value</code> + <code>limit_window</code> (compiled into Caddy's <code>max_events</code> / <code>window</code>), with <code>limit_key</code> deciding what to count by. The whitelist passes ahead of the rule; the blacklist always blocks.</span>
+      </div>
+    </section>
+
+    <section id="certificates">
+      <h2><span class="zh">证书管理</span><span class="en">Certificate management</span></h2>
+      <p class="section-sub"><span class="zh">登记域名证书、跟踪有效期，并管理自动续订与即将到期提醒。</span><span class="en">Register domain certificates, track validity, and manage auto-renewal and expiry alerts.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>POST / GET</td><td><code>caddy/certificates</code></td><td><span class="zh">注册新证书 / 列出全部证书</span><span class="en">Register a new cert / list all certs</span></td></tr>
+          <tr><td>GET / PUT / DELETE</td><td><code>caddy/certificates/{cert_id}</code></td><td><span class="zh">取 / 改 / 删单个证书</span><span class="en">Get / update / delete one cert</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/certificates/{cert_id}/renew</code></td><td><span class="zh">手动触发续订</span><span class="en">Manually trigger renewal</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/certificates/{cert_id}/auto-renew</code></td><td><span class="zh">开 / 关自动续订</span><span class="en">Toggle auto-renewal</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/certificates/expiring</code></td><td><span class="zh">列出阈值内即将过期的证书（默认 30 天）</span><span class="en">List certs expiring within a threshold (default 30 days)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/certificates/statistics</code></td><td><span class="zh">证书状态统计汇总</span><span class="en">Certificate-status statistics summary</span></td></tr>
+        </tbody>
+      </table>
+      <h3><span class="zh">核心字段</span><span class="en">Core fields</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Field</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>domain</code> / <code>alt_domains</code></td><td><span class="zh">主域名（唯一）与备用域名（SAN）</span><span class="en">Primary domain (unique) and alt names (SAN)</span></td></tr>
+          <tr><td><code>certificate_pem</code> / <code>private_key_pem</code></td><td><span class="zh">PEM 编码的证书与私钥（库内以 Text 存储）</span><span class="en">PEM-encoded cert and private key (stored as Text)</span></td></tr>
+          <tr><td><code>issuer</code></td><td><span class="zh">签发方名称</span><span class="en">Issuer name</span></td></tr>
+          <tr><td><code>issued_at</code> / <code>expires_at</code></td><td><span class="zh">签发与过期时间，用于到期排序与提醒</span><span class="en">Issue / expiry timestamps, used for expiry sorting and alerts</span></td></tr>
+          <tr><td><code>status</code></td><td><span class="zh">状态：<code>pending</code> / <code>active</code> / <code>expiring</code> / <code>expired</code> / <code>renewing</code> / <code>revoked</code></span><span class="en">Status: <code>pending</code> / <code>active</code> / <code>expiring</code> / <code>expired</code> / <code>renewing</code> / <code>revoked</code></span></td></tr>
+          <tr><td><code>auto_renew</code> / <code>renew_before_days</code></td><td><span class="zh">是否自动续订（默认开）/ 提前续订天数（7–90，默认 30）</span><span class="en">Auto-renew (default on) / renew-ahead days (7–90, default 30)</span></td></tr>
+          <tr><td><code>acme_provider</code> / <code>acme_challenge_type</code></td><td><span class="zh">ACME 提供方（<code>letsencrypt</code> 等）与挑战方式（<code>http-01</code> 等）</span><span class="en">ACME provider (<code>letsencrypt</code> etc.) and challenge type (<code>http-01</code> etc.)</span></td></tr>
+          <tr><td><code>last_renew_attempt</code> / <code>last_renew_success</code> / <code>renew_error</code></td><td><span class="zh">最近续订尝试 / 成功时间与失败原因</span><span class="en">Last renew attempt / success time and failure reason</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note warn">
+        <span class="zh"><strong>私钥以明文 Text 存储。</strong>本表的 <code>private_key_pem</code> 不在应用层做加密（区别于运维登录的 TOTP secret——后者用 Fernet 加密）。生产中应配合数据库层加密 / 访问控制，避免私钥裸存。</span>
+        <span class="en"><strong>Private keys are stored as plaintext Text.</strong> <code>private_key_pem</code> is not encrypted at the application layer (unlike the ops-login TOTP secret, which is Fernet-encrypted). In production, pair this with database-level encryption / access control so private keys are not stored in the clear.</span>
+      </div>
+      <h3><span class="zh">续订流程</span><span class="en">Renewal flow</span></h3>
+      <ol class="steps">
+        <li><h4><span class="zh">挑选到期候选</span><span class="en">Pick renewal candidates</span></h4><p><span class="zh">系统按 <code>auto_renew=true</code> 且 <code>status=active</code> 且 <code>expires_at</code> 落在 <code>renew_before_days</code> 内筛出候选证书。</span><span class="en">Candidates are filtered by <code>auto_renew=true</code> and <code>status=active</code> and <code>expires_at</code> within <code>renew_before_days</code>.</span></p></li>
+        <li><h4><span class="zh">触发续订</span><span class="en">Trigger renewal</span></h4><p><span class="zh">手动 <code>renew</code> 或自动调度发起 ACME 续订。</span><span class="en">A manual <code>renew</code> or the auto-scheduler kicks off ACME renewal.</span></p></li>
+        <li><h4><span class="zh">回写结果</span><span class="en">Record the result</span></h4><p><span class="zh">无论成败都回写 <code>last_renew_attempt</code> / <code>last_renew_success</code> / <code>renew_error</code>，供下次决策与排错。</span><span class="en">Success or failure, it writes back <code>last_renew_attempt</code> / <code>last_renew_success</code> / <code>renew_error</code> for the next decision and troubleshooting.</span></p></li>
+      </ol>
+    </section>
+
+    <section id="stats">
+      <h2><span class="zh">访问统计</span><span class="en">Access statistics</span></h2>
+      <p class="section-sub"><span class="zh">实时与趋势两类视角，外加 Top 排名与清理。</span><span class="en">Realtime and trend views, plus top rankings and cleanup.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>GET</td><td><code>caddy/stats/realtime/global</code></td><td><span class="zh">全局实时统计</span><span class="en">Global realtime stats</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/realtime/service/{service_name}</code></td><td><span class="zh">单服务实时统计</span><span class="en">Per-service realtime stats</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/trend/global</code></td><td><span class="zh">全局流量趋势</span><span class="en">Global traffic trend</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/trend/service/{service_name}</code></td><td><span class="zh">单服务流量趋势</span><span class="en">Per-service traffic trend</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/trend/route/{route_id}</code></td><td><span class="zh">单路由流量趋势</span><span class="en">Per-route traffic trend</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/top/countries</code></td><td><span class="zh">访问量 Top 国家排名</span><span class="en">Top countries by traffic</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/stats/top/ips</code></td><td><span class="zh">访问量 Top IP 排名</span><span class="en">Top IPs by traffic</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/stats/cleanup</code></td><td><span class="zh">清理旧统计（默认保留 90 天）</span><span class="en">Clean up old stats (default 90-day retention)</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">趋势接口按 <code>stat_period</code>（<code>minute</code> / <code>hour</code> / <code>day</code> / <code>month</code>）聚合，默认回看 <code>hours=24</code>；实时接口用 1 / 5 / 15 / 60 分钟多窗口回退，减少仪表板抖动。Top 排名默认窗口 1 小时、<code>limit=20</code>。每条统计记录覆盖请求数、成功 / 4xx / 5xx 分布、收发字节、响应时延（avg / p50 / p95 / p99）、WAF 拦截、限流命中、TLS / 非 TLS、独立 IP 数等指标。</span>
+        <span class="en">Trend endpoints aggregate by <code>stat_period</code> (<code>minute</code> / <code>hour</code> / <code>day</code> / <code>month</code>), looking back <code>hours=24</code> by default; realtime endpoints fall back across 1 / 5 / 15 / 60-minute windows to reduce dashboard flicker. Top rankings default to a 1-hour window and <code>limit=20</code>. Each stats record covers request counts, success / 4xx / 5xx split, bytes sent/received, latency (avg / p50 / p95 / p99), WAF blocks, rate-limit hits, TLS / non-TLS, unique IPs and more.</span>
+      </p>
+    </section>
+
+    <section id="logs" style="border-bottom:none">
+      <h2><span class="zh">访问日志分析</span><span class="en">Access-log analysis</span></h2>
+      <p class="section-sub"><span class="zh">原始访问日志检索 + 安全事件 + 四类聚合分析。</span><span class="en">Raw access-log search + security events + four analyses.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>POST</td><td><code>caddy/logs/search</code></td><td><span class="zh">按 IP / 国家 / 路由 / 状态码 / 时延 / 时间窗等条件检索（<code>limit</code> 1–1000，默认 100）</span><span class="en">Search by IP / country / route / status / latency / time window (<code>limit</code> 1–1000, default 100)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/logs/security-events</code></td><td><span class="zh">安全事件日志（WAF 拦截 / 限流命中）</span><span class="en">Security-event logs (WAF blocks / rate-limit hits)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/logs/analysis/geographic</code></td><td><span class="zh">地理分布（按国家聚合）</span><span class="en">Geographic distribution (by country)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/logs/analysis/status-codes</code></td><td><span class="zh">状态码分布</span><span class="en">Status-code distribution</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/logs/analysis/suspicious-ips</code></td><td><span class="zh">可疑 IP 检测（默认 10 分钟窗 / 阈值 1000 次）</span><span class="en">Suspicious-IP detection (default 10-min window / 1000-request threshold)</span></td></tr>
+          <tr><td>GET</td><td><code>caddy/logs/analysis/error-patterns</code></td><td><span class="zh">错误模式分析（错误率 + Top 错误路径 + 按状态码分布）</span><span class="en">Error-pattern analysis (error rate + top error paths + by-status split)</span></td></tr>
+          <tr><td>POST</td><td><code>caddy/logs/cleanup</code></td><td><span class="zh">清理旧访问日志（默认保留 30 天）</span><span class="en">Clean up old access logs (default 30-day retention)</span></td></tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        <span class="zh">访问日志记录覆盖请求标识、客户端 IP / 端口 / UA、地理信息（国家 / 城市 / 经纬度 / ISP）、请求方法 / 路径 / 协议、命中的路由与上游、状态码 / 响应大小 / 时延、WAF 动作与评分、是否被限流、TLS 版本与套件等。可疑 IP 检测与错误模式分析正是基于这些字段做窗口聚合。</span>
+        <span class="en">Each access-log record covers request id, client IP / port / UA, geo (country / city / lat-long / ISP), method / path / protocol, matched route and upstream, status / size / latency, WAF action and score, rate-limited flag, TLS version and cipher, and more. Suspicious-IP detection and error-pattern analysis aggregate over exactly these fields within a window.</span>
+      </p>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="adminops-ui.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">运维前端</span><span class="en">Admin Ops UI</span></span></a>
+      <a class="next" href="registry-health.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">注册与健康</span><span class="en">Registry &amp; Health</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

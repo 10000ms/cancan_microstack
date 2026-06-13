@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作流引擎 · API 参考 / API Reference — Cancan Microstack</title>
+<meta name="description" content="HTTP API reference for the Cancan Microstack workflow engine on infrasrv: definition management, run queries, async callbacks, statistics and engine alerts, plus the opsbffsrv mirror endpoints.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="wf-api">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">工作流引擎 · API 参考</span><span class="en">Workflow Engine · API Reference</span></h1>
+    <p class="page-lead">
+      <span class="zh">工作流引擎的全部 HTTP 接口都挂在 infrasrv 的 <code>/v1/infrasrv</code> 前缀下，按职责分为五组：<strong>定义管理、运行查询、回调、统计与告警</strong>。运维前端用的是 opsbffsrv 的一套镜像接口，本页末尾说明两者关系。</span>
+      <span class="en">All of the workflow engine's HTTP endpoints sit under infrasrv's <code>/v1/infrasrv</code> prefix, grouped by responsibility: <strong>definition management, run queries, callbacks, statistics and alerts</strong>. The ops frontend uses a mirror set on opsbffsrv, explained at the end of this page.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#definitions"><span class="zh">定义管理</span><span class="en">Definitions</span></a>
+      <a href="#runs"><span class="zh">运行查询</span><span class="en">Runs</span></a>
+      <a href="#callbacks"><span class="zh">回调</span><span class="en">Callbacks</span></a>
+      <a href="#alerts"><span class="zh">统计与告警</span><span class="en">Stats & alerts</span></a>
+      <a href="#opsbff"><span class="zh">运维镜像接口</span><span class="en">Ops mirror</span></a>
+    </div>
+
+    <section id="definitions">
+      <h2><span class="zh">定义管理</span><span class="en">Definition management</span></h2>
+      <p class="section-sub"><span class="zh">工作流定义的增删改查、版本历史、回滚与触发——设计态的全部操作都在这一组。</span><span class="en">CRUD, version history, rollback and trigger for workflow definitions — every design-side operation lives here.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows</code></td><td><span class="zh">创建工作流定义（同时建初始版本快照）</span><span class="en">Create a definition (creates the initial version snapshot)</span></td><td><code>name</code> · <code>nodes_config</code> · <code>graph_data</code> · <code>schedule</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows</code></td><td><span class="zh">分页列出工作流定义</span><span class="en">List definitions with pagination</span></td><td><code>page</code> · <code>page_size</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">获取单个定义详情</span><span class="en">Fetch one definition</span></td><td><code>workflow_id</code></td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">更新定义（分布式锁保护，版本自增 + 新快照）</span><span class="en">Update (lock-protected; version bump + new snapshot)</span></td><td><code>nodes_config</code> · <code>is_active</code> · <code>change_summary</code></td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">软删除定义（置 flag，锁保护）</span><span class="en">Soft-delete (sets flag, lock-protected)</span></td><td><code>workflow_id</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/versions</code></td><td><span class="zh">列出版本历史（最新在前）</span><span class="en">List version history (newest first)</span></td><td><code>limit</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/rollback</code></td><td><span class="zh">回滚到指定版本（恢复 nodes_config + global_context，再生成新版本）</span><span class="en">Roll back to a version (restore nodes_config + global_context, create a new version)</span></td><td><code>target_version</code> · <code>reason</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/trigger</code></td><td><span class="zh">触发一次运行（绑定定义快照）</span><span class="en">Trigger a run (binds a definition snapshot)</span></td><td><code>trigger_context</code> → <code>run_id</code> · <code>dispatch_status</code></td></tr>
+        </tbody>
+      </table>
+      <div class="note"><span class="zh"><strong>路由顺序的讲究。</strong><code>/workflows/stats</code> 和 <code>/workflows/alerts</code> 这类固定子路径，在路由表里排在 <code>/workflows/{workflow_id}</code> 之前，以免被当成 <code>workflow_id</code> 误匹配。这是阅读路由表时容易忽略的细节。</span><span class="en"><strong>A note on route order.</strong> Fixed sub-paths like <code>/workflows/stats</code> and <code>/workflows/alerts</code> are registered before <code>/workflows/{workflow_id}</code> so they are not mistaken for a <code>workflow_id</code> — an easy detail to miss when reading the route table.</span></div>
+    </section>
+
+    <section id="runs">
+      <h2><span class="zh">运行查询</span><span class="en">Run queries</span></h2>
+      <p class="section-sub"><span class="zh">运行态只读：列出运行、查运行图谱状态、查单节点的执行历史。</span><span class="en">Read-only runtime: list runs, fetch the run graph status, and a single node's execution history.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs</code></td><td><span class="zh">分页 / 过滤列出运行实例</span><span class="en">List runs with paging / filters</span></td><td><code>workflow_id</code> · <code>reqid</code> · <code>status</code> · <code>date_from</code> · <code>date_to</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs/{run_id}/status</code></td><td><span class="zh">查运行图谱（节点 + 连线 + 各节点状态 / 最新输出）</span><span class="en">Run graph (nodes + edges + per-node status / last output)</span></td><td><code>run_id</code> → <code>nodes[]</code> · <code>edges[]</code> · <code>status</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs/{run_id}/nodes/{node_id}/history</code></td><td><span class="zh">查单节点执行历史（含每次尝试的执行日志）</span><span class="en">A node's execution history (incl. each attempt's log)</span></td><td><code>run_id</code> · <code>node_id</code> → <code>histories[]</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh"><code>/runs/{run_id}/status</code> 返回的是给可视化用的图谱：每个节点带 <code>status</code>、<code>loop_index</code>、<code>last_output</code> 与画布坐标，前端据此把运行实时状态叠加在工作流图上。它的定义来源是运行绑定的快照，因此即便定义被改也能还原"当时的图"。</span>
+        <span class="en"><code>/runs/{run_id}/status</code> returns a graph for visualization: each node carries <code>status</code>, <code>loop_index</code>, <code>last_output</code> and canvas coordinates, letting the frontend overlay live run state on the workflow graph. Its definition comes from the run-bound snapshot, so it can reconstruct "the graph as it was" even after the definition changes.</span>
+      </p>
+    </section>
+
+    <section id="callbacks">
+      <h2><span class="zh">回调</span><span class="en">Callbacks</span></h2>
+      <p class="section-sub"><span class="zh">异步 ACTION 节点的恢复入口：外部系统办完事，回调这里把挂起节点唤醒。</span><span class="en">The resume entry for async ACTION nodes: once the external system is done, it calls back here to wake the suspended node.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/callbacks/{node_instance_id}</code></td><td><span class="zh">异步 ACTION 完成回调，恢复运行并派发下游</span><span class="en">Async ACTION completion callback; resume the run and dispatch downstream</span></td><td><code>node_instance_id</code> · <span class="zh">回调载荷</span><span class="en">callback payload</span> → <code>status</code> (ACCEPTED / IGNORED)</td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh">该地址正是 ACTION 节点 <code>async_mode</code> 触发时注入到请求头 <code>X-Callback-Url</code> 的值（由 infrasrv host 拼接而成）。只有当对应节点实例确实处于 <code>SUSPENDED</code> 时回调才被接受（<code>ACCEPTED</code>）；否则忽略（<code>IGNORED</code>），从而幂等地抵御重复回调。</span>
+        <span class="en">This is exactly the value injected into the <code>X-Callback-Url</code> request header when an ACTION node's <code>async_mode</code> fires (built from the infrasrv host). The callback is accepted (<code>ACCEPTED</code>) only when the target node instance is genuinely <code>SUSPENDED</code>; otherwise it is ignored (<code>IGNORED</code>), idempotently shrugging off duplicate callbacks.</span>
+      </div>
+    </section>
+
+    <section id="alerts">
+      <h2><span class="zh">统计与告警</span><span class="en">Statistics & alerts</span></h2>
+      <p class="section-sub"><span class="zh">引擎的运维可观测面：整体统计指标，以及编排守护逻辑产出的引擎告警与处置接口。</span><span class="en">The engine's ops observability surface: overall statistics, plus engine alerts emitted by the orchestration guard and their handling endpoints.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/stats</code></td><td><span class="zh">工作流总体统计</span><span class="en">Overall workflow statistics</span></td><td><code>total_runs</code> · <code>runs_by_status</code> · <code>success_rate_24h</code> · <code>next_cron_window</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/alerts</code></td><td><span class="zh">列出引擎告警（可按状态 / 严重度 / 运行过滤）</span><span class="en">List engine alerts (filter by status / severity / run)</span></td><td><code>status</code> · <code>severity</code> · <code>run_id</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/alerts/{alert_id}/ack</code></td><td><span class="zh">标记告警为已知晓</span><span class="en">Acknowledge an alert</span></td><td><code>operator</code> · <code>note</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/alerts/{alert_id}/resolve</code></td><td><span class="zh">标记告警为已解决</span><span class="en">Resolve an alert</span></td><td><code>operator</code> · <code>note</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">引擎告警由编排守护逻辑在异常时落库，便于运维看清"哪条运行的哪个节点出了什么问题"。常见原因包括：运行 ID 非法、运行 / 定义缺失、节点配置缺失、节点执行异常、以及成功节点却无下游的编排断点。告警有 <code>OPEN → ACKED → RESOLVED</code> 的生命周期与严重程度 / 分类，供前端筛选。</span>
+        <span class="en">Engine alerts are persisted by the orchestration guard on anomalies, so operators can see "which node of which run failed and why". Common reasons include: invalid run ID, missing run / definition, missing node config, node execution exception, and the orchestration dead-end of a successful node with no downstream. Alerts have an <code>OPEN → ACKED → RESOLVED</code> lifecycle plus severity / category for frontend filtering.</span>
+      </p>
+    </section>
+
+    <section id="opsbff" style="border-bottom:none">
+      <h2><span class="zh">运维镜像接口</span><span class="en">Ops mirror endpoints</span></h2>
+      <p class="section-sub"><span class="zh">运维前端不直接打 infrasrv，而是经 opsbffsrv 的一套面向 UI 的镜像接口。</span><span class="en">The ops frontend does not call infrasrv directly; it goes through a UI-oriented mirror set on opsbffsrv.</span></p>
+      <div class="note">
+        <span class="zh"><strong>两套接口，各司其职。</strong>上面列的 <code>/v1/infrasrv/…</code> 是引擎自身的能力面。运维前端（adminops UI）实际调用的是 opsbffsrv 上的镜像接口 <code>/v1/opsbffsrv/ops/workflows…</code>——它在透传引擎能力的同时，补充了几个<strong>面向运维操作</strong>的动作：<code>toggle</code>（启停定义）、<code>duplicate</code>（复制工作流）、<code>publish</code>（发布）、<code>validate</code>（校验）。这套镜像同样覆盖了 stats、alerts（含 ack / resolve）、versions、rollback、trigger 等。两者关系与边界详见 <a href="service-opsbffsrv.html">opsbffsrv 服务页</a>与<a href="adminops-ui.html">运维前端页</a>。</span>
+        <span class="en"><strong>Two API sets, distinct roles.</strong> The <code>/v1/infrasrv/…</code> endpoints listed above are the engine's own capability surface. The ops frontend (adminops UI) actually calls the mirror set on opsbffsrv at <code>/v1/opsbffsrv/ops/workflows…</code> — which passes the engine's capabilities through while adding a few <strong>operations-oriented</strong> actions: <code>toggle</code> (enable/disable a definition), <code>duplicate</code> (copy a workflow), <code>publish</code>, and <code>validate</code>. This mirror also covers stats, alerts (incl. ack / resolve), versions, rollback and trigger. For the relationship and boundaries, see the <a href="service-opsbffsrv.html">opsbffsrv service page</a> and the <a href="adminops-ui.html">Admin Ops UI page</a>.</span>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="workflow-scheduling.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">调度与编排</span><span class="en">Scheduling</span></span></a>
+      <a class="next" href="adminops-ui.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">运维前端</span><span class="en">Admin Ops UI</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

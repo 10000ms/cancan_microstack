@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>部署与安全 / Deployment &amp; Security — Cancan Microstack</title>
+<meta name="description" content="Deployment & Security for Cancan Microstack: from a one-command local stack to production hardening — topology, environment variables, secrets, overrides and upgrades.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="deployment">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">部署与安全</span><span class="en">Deployment &amp; Security</span></h1>
+    <p class="page-lead">
+      <span class="zh">从本地一键起栈到生产部署的要点：依赖、拓扑、生产凭证、覆盖定制、升级与可观测性。</span>
+      <span class="en">From a one-command local stack to production: dependencies, topology, production secrets, overrides, upgrades and observability.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#deps"><span class="zh">依赖与环境</span><span class="en">Dependencies</span></a>
+      <a href="#topology"><span class="zh">整栈拓扑</span><span class="en">Topology</span></a>
+      <a href="#security"><span class="zh">生产安全</span><span class="en">Production safety</span></a>
+      <a href="#overrides"><span class="zh">覆盖与定制</span><span class="en">Overrides</span></a>
+      <a href="#upgrade"><span class="zh">升级</span><span class="en">Upgrades</span></a>
+      <a href="#observability"><span class="zh">可观测性</span><span class="en">Observability</span></a>
+    </div>
+
+    <section id="deps">
+      <h2><span class="zh">依赖与环境</span><span class="en">Dependencies &amp; environment</span></h2>
+      <p class="section-sub"><span class="zh">一行 pip 装好工具箱，一条命令拉起整栈；中间件由内置 infra compose 提供，无需手装。</span><span class="en">One pip command for the toolkit, one command for the whole stack; the middleware comes from the bundled infra compose — nothing to install by hand.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">要求</span><span class="en">Requirement</span></th><th><span class="zh">说明</span><span class="en">Detail</span></th></tr></thead>
+        <tbody>
+          <tr><td>Python ≥ 3.10</td><td><span class="zh">运行库与 CLI 的宿主机环境。</span><span class="en">Host runtime for the library and CLI.</span></td></tr>
+          <tr><td>Docker <span class="zh">或</span><span class="en"> or </span>Podman</td><td><span class="zh">运行容器栈所需；CLI 自动探测，可用 <code>--engine</code> 显式指定。</span><span class="en">Required to run the container stack; auto-detected, overridable via <code>--engine</code>.</span></td></tr>
+          <tr><td>PostgreSQL · Redis · MongoDB · RabbitMQ</td><td><span class="zh">由内置 infra compose 作为容器一并提供，无需单独部署。</span><span class="en">Provided as containers by the bundled infra compose — no separate deployment.</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 安装工具箱 / Install the toolkit</span>
+pip install cancan-microstack
+
+<span class="tok-c"># 在业务仓根目录一键起栈 / Bring up the whole stack from your repo root</span>
+cancan stack up --workspace . --service-file docker-compose.services.yml</code></pre>
+      <p>
+        <span class="zh"><code>pip install</code> 会一并带上姊妹库 <code>linglong-web[all]</code>（Web 框架，编排 PostgreSQL / Redis / MongoDB / RabbitMQ / Celery）与 <code>dragonfly-container[all]</code>（容器操作封装）。安装即提供 <code>cancan</code> 命令，等价于 <code>python -m cancan_microstack.cli</code>。完整起栈流程见 <a href="quickstart.html">快速开始</a>。</span>
+        <span class="en"><code>pip install</code> also pulls in the sibling libraries <code>linglong-web[all]</code> (the web framework that orchestrates PostgreSQL / Redis / MongoDB / RabbitMQ / Celery) and <code>dragonfly-container[all]</code> (the container-control wrapper). Installation provides the <code>cancan</code> command, equivalent to <code>python -m cancan_microstack.cli</code>. See <a href="quickstart.html">Quick Start</a> for the full bring-up flow.</span>
+      </p>
+    </section>
+
+    <section id="topology">
+      <h2><span class="zh">整栈拓扑</span><span class="en">Stack topology</span></h2>
+      <p class="section-sub"><span class="zh">一层宿主机进程 + 一层容器：Caddy 网关在最前，反向代理到容器化的业务与运维服务，下接四类中间件。</span><span class="en">One host process plus a container layer: the Caddy gateway sits in front, reverse-proxying to the containerized business and ops services, with four backing stores below.</span></p>
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">controllersrv</div><div class="d"><span class="zh">宿主机进程 · 驱动 Docker/Podman</span><span class="en">host process · drives Docker/Podman</span></div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">Caddy <span class="zh">网关</span><span class="en">gateway</span></div><div class="d"><span class="zh">反向代理 + WAF · 唯一入口</span><span class="en">reverse proxy + WAF · sole entry</span></div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t"><span class="zh">业务服务</span><span class="en">Business services</span></div><div class="d"><span class="zh">你的业务容器</span><span class="en">your business containers</span></div></div>
+          <div class="arch-box"><div class="t">infrasrv</div><div class="d"><span class="zh">注册 · 工作流 · 日志</span><span class="en">registry · workflow · logs</span></div></div>
+          <div class="arch-box"><div class="t">opsbffsrv</div><div class="d"><span class="zh">运维 BFF</span><span class="en">ops BFF</span></div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">PostgreSQL</div><div class="d">infra / ops / biz</div></div>
+          <div class="arch-box"><div class="t">Redis</div><div class="d"><span class="zh">缓存 · Celery broker</span><span class="en">cache · Celery broker</span></div></div>
+          <div class="arch-box"><div class="t">MongoDB</div><div class="d"><span class="zh">日志存储</span><span class="en">log storage</span></div></div>
+          <div class="arch-box"><div class="t">RabbitMQ</div><div class="d"><span class="zh">消息 · 日志投递</span><span class="en">messaging · log delivery</span></div></div>
+        </div>
+      </div>
+      <p>
+        <span class="zh"><code>controllersrv</code> 要操作 Docker/Podman，因此跑在宿主机、不进容器；其余服务都是容器，由内置 infra compose 与你的业务 compose 合成后统一拉起。容器化服务<strong>不直接暴露端口</strong>，外部一律经 Caddy 网关进入。infra compose 还附带三个数据库可视化工具（pgweb / redis-commander / mongo-express）和 RabbitMQ 管理控制台，均经 opsbffsrv 代理在运维前端中访问。</span>
+        <span class="en"><code>controllersrv</code> must drive Docker/Podman, so it runs on the host rather than in a container; everything else is a container, brought up together from the bundled infra compose merged with your business compose. Containerized services <strong>do not expose ports directly</strong> — all external traffic enters through the Caddy gateway. The infra compose also bundles three database visualization tools (pgweb / redis-commander / mongo-express) and the RabbitMQ management console, all reachable in the admin UI via opsbffsrv proxies.</span>
+      </p>
+    </section>
+
+    <section id="security">
+      <h2><span class="zh">生产安全</span><span class="en">Production safety</span></h2>
+      <p class="section-sub"><span class="zh">开箱默认值是为开发便利，绝不是为生产准备的——上线前必须用环境变量替换。</span><span class="en">The out-of-the-box defaults are for development convenience, never for production — replace them with environment variables before going live.</span></p>
+      <div class="note warn">
+        <span class="zh"><strong>切勿沿用默认凭证。</strong>内置 compose 与服务配置使用本地开发的弱默认值便于开箱即用——例如 PostgreSQL 密码 <code>postgres123</code>，RabbitMQ / MongoDB / mongo-express 等的 <code>admin123</code>。这些值<strong>全部可被环境变量覆盖</strong>。<strong>生产部署时务必通过环境变量注入真实凭证，切勿把任何默认值带上线。</strong>（注意：opsbffsrv 运维后台的 <code>admin</code> 用户密码在首次启动时随机生成并写入启动日志，需在首次登录后立即修改，而非固定弱口令。）</span>
+        <span class="en"><strong>Never ship the default credentials.</strong> The bundled compose and service configs use weak local-dev defaults so the stack works out of the box — for example the PostgreSQL password <code>postgres123</code>, and <code>admin123</code> for RabbitMQ / MongoDB / mongo-express. <strong>Every one of them is overridable via environment variables.</strong> <strong>In production, always inject real secrets through env vars and never carry any default to a live deployment.</strong> (Note: the opsbffsrv admin console's <code>admin</code> user gets a randomly generated password on first startup, written to the startup log — change it right after the first login rather than relying on a fixed weak password.)</span>
+      </div>
+      <h3><span class="zh">关键环境变量</span><span class="en">Key environment variables</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">变量</span><span class="en">Variable</span></th><th><span class="zh">作用</span><span class="en">What it sets</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>PGSQL_HOST</code> · <code>PGSQL_PORT</code> · <code>PGSQL_USER</code> · <code>PGSQL_PASSWORD</code> · <code>PGSQL_DB</code></td><td><span class="zh">PostgreSQL 连接与凭证（<code>PGSQL_DATABASES</code> 指定逻辑库，<code>PGSQL_POOL_SIZE</code> / <code>PGSQL_MAX_OVERFLOW</code> 调连接池）。</span><span class="en">PostgreSQL connection and credentials (<code>PGSQL_DATABASES</code> lists logical DBs; <code>PGSQL_POOL_SIZE</code> / <code>PGSQL_MAX_OVERFLOW</code> tune the pool).</span></td></tr>
+          <tr><td><code>REDIS_URL</code></td><td><span class="zh">Redis 连接串（缓存与 Celery broker）。</span><span class="en">Redis connection string (cache and Celery broker).</span></td></tr>
+          <tr><td><code>MONGODB_URI</code></td><td><span class="zh">MongoDB 连接串（日志存储），含用户名/密码/authSource。</span><span class="en">MongoDB connection string (log storage), including user/password/authSource.</span></td></tr>
+          <tr><td><code>RABBITMQ_HOST</code> · <code>RABBITMQ_PORT</code> · <code>RABBITMQ_USERNAME</code> · <code>RABBITMQ_PASSWORD</code> · <code>RABBITMQ_VHOST</code></td><td><span class="zh">RabbitMQ 连接与凭证（日志投递交换机/队列另有 <code>RABBITMQ_LOG_*</code>，管理控制台代理另有 <code>RABBITMQ_MGMT_*</code>）。</span><span class="en">RabbitMQ connection and credentials (log delivery uses <code>RABBITMQ_LOG_*</code>; the management-console proxy uses <code>RABBITMQ_MGMT_*</code>).</span></td></tr>
+          <tr><td><code>CONTROLLERSRV_HOST</code></td><td><span class="zh">controllersrv 的访问地址，供其余服务回调/调用。</span><span class="en">The controllersrv address used by other services for calls/callbacks.</span></td></tr>
+          <tr><td><code>CANCAN_WORKSPACE_ROOT</code></td><td><span class="zh">工作区根目录；资源解析时优先于库内置资产。</span><span class="en">The workspace root; takes precedence over bundled assets during resource resolution.</span></td></tr>
+          <tr><td><code>CANCAN_OVERRIDE_ROOT</code></td><td><span class="zh">免 Fork 覆盖目录（默认 <code>cancan_overrides/</code>）的位置。</span><span class="en">Location of the fork-free overrides directory (default <code>cancan_overrides/</code>).</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">DDL 脚本目录由 <code>DDL_SCRIPT_PATH</code> 控制（默认指向内置 <code>ddl/infra</code> / <code>ddl/ops</code> 资产，可被工作区覆盖）；建表随服务启动自动初始化，详见 <a href="data-model.html">数据模型</a>。</span>
+        <span class="en">The DDL script directory is controlled by <code>DDL_SCRIPT_PATH</code> (defaulting to the bundled <code>ddl/infra</code> / <code>ddl/ops</code> assets, overridable from the workspace); tables are initialized automatically on service startup — see <a href="data-model.html">Data Model</a>.</span>
+      </p>
+    </section>
+
+    <section id="overrides">
+      <h2><span class="zh">覆盖与定制</span><span class="en">Overrides &amp; customization</span></h2>
+      <p class="section-sub"><span class="zh">不必 Fork 整个库——只替换你想改的那几个文件。</span><span class="en">No need to fork the whole library — replace only the files you actually want to change.</span></p>
+      <p>
+        <span class="zh">在工作区放一个 <code>cancan_overrides/&lt;service&gt;/</code> 目录，只放你要替换的文件，运行时通过 <code>resolve_workspace_or_asset</code> <strong>工作区优先</strong>加载它，其余仍复用库内置实现。覆盖根可由 <code>CANCAN_OVERRIDE_ROOT</code> 指定。这样升级库时，未覆盖的部分自动随版本演进，你只维护真正定制的那一小部分。</span>
+        <span class="en">Place a <code>cancan_overrides/&lt;service&gt;/</code> directory in your workspace holding only the files you want to replace; at runtime <code>resolve_workspace_or_asset</code> loads it <strong>workspace-first</strong>, falling back to the bundled implementation for everything else. The override root can be set via <code>CANCAN_OVERRIDE_ROOT</code>. This way, when you upgrade the library, everything you did not override evolves with the version automatically, and you maintain only the small slice you genuinely customized.</span>
+      </p>
+    </section>
+
+    <section id="upgrade">
+      <h2><span class="zh">升级</span><span class="en">Upgrades</span></h2>
+      <p class="section-sub"><span class="zh">基础设施随<strong>库版本</strong>演进，而不是到处 copy-paste 模板。</span><span class="en">Infrastructure evolves with the <strong>library version</strong>, not by copy-pasting templates around.</span></p>
+      <pre><code><span class="tok-c"># bump 版本并重新安装 / Bump the pinned version and reinstall</span>
+pip install --upgrade cancan-microstack</code></pre>
+      <p>
+        <span class="zh">compose、DDL、脚本与运维前端都是<strong>包内资产</strong>，随库一起发布。升级库即升级基础设施：bump 版本 → 重新 <code>pip install</code> → 下次 <code>cancan stack up</code> 用上新的内置资产。你只需关心被覆盖的文件是否需要随新版本调整。</span>
+        <span class="en">compose, DDL, scripts and the ops UI are all <strong>in-package assets</strong> shipped with the library. Upgrading the library upgrades the infrastructure: bump the version → re-run <code>pip install</code> → the next <code>cancan stack up</code> uses the new bundled assets. You only need to check whether any files you overrode need adjusting for the new version.</span>
+      </p>
+    </section>
+
+    <section id="observability" style="border-bottom:none">
+      <h2><span class="zh">可观测性</span><span class="en">Observability</span></h2>
+      <p class="section-sub"><span class="zh">健康检查、日志管道与网关统计三条线，各有对应的能力页。</span><span class="en">Health checks, the logging pipeline and gateway stats — three lines, each with its own page.</span></p>
+      <div class="grid">
+        <a class="card" href="registry-health.html"><span class="ic">❤️</span><h4><span class="zh">注册与健康</span><span class="en">Registry &amp; Health</span></h4><p><span class="zh">实例心跳、健康检查与失败计数；<code>controllersrv</code> 起栈时轮询 <code>/internal/health</code> 等待就绪。</span><span class="en">Instance heartbeats, health checks and failure counts; <code>controllersrv</code> polls <code>/internal/health</code> on bring-up.</span></p></a>
+        <a class="card" href="logging.html"><span class="ic">📜</span><h4><span class="zh">日志管道</span><span class="en">Logging Pipeline</span></h4><p><span class="zh">业务与服务日志经 RabbitMQ 投递、落 MongoDB，opsbffsrv 提供检索。</span><span class="en">Business and service logs flow via RabbitMQ into MongoDB; opsbffsrv exposes search.</span></p></a>
+        <a class="card" href="caddy.html"><span class="ic">🛡️</span><h4><span class="zh">Caddy 网关</span><span class="en">Caddy Gateway</span></h4><p><span class="zh">访问日志、WAF、限流与实时/趋势统计，全在运维前端可视化。</span><span class="en">Access logs, WAF, rate limiting and realtime/trend stats, all visualized in the admin UI.</span></p></a>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="api-reference.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">API 索引</span><span class="en">API Index</span></span></a>
+      <a class="next" href="index.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">返回首页</span><span class="en">Back to Home</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

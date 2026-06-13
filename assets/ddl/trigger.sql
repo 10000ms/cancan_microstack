@@ -1,0 +1,21 @@
+BEGIN;
+
+CREATE OR REPLACE FUNCTION upd_timestamp() RETURNS TRIGGER AS
+$$
+BEGIN
+    NEW.update_time = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END
+$$
+    LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION update_modified_column() RETURNS TRIGGER AS
+$$
+BEGIN
+    NEW.update_time = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END
+$$
+    LANGUAGE plpgsql;
+
+COMMIT;

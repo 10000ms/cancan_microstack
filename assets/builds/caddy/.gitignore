@@ -1,0 +1,15 @@
+# Caddy 运行时文件
+logs/
+data/
+config/
+
+# GeoIP 数据库（体积大，不提交到 Git）
+geoip/*.mmdb
+geoip/*.dat
+
+# 但是保留 GeoLite2-City.mmdb（项目需要）
+!geoip/GeoLite2-City.mmdb
+
+# OWASP CRS（可选，如果使用）
+waf/owasp-crs/
+waf/*.tar.gz

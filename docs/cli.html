@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLI 参考 / CLI Reference — Cancan Microstack</title>
+<meta name="description" content="Complete CLI reference for Cancan Microstack: assets, compose, services, stack and controllersrv command groups, with every flag and worked examples.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="cli">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">CLI 参考</span><span class="en">CLI Reference</span></h1>
+    <p class="page-lead">
+      <span class="zh"><code>cancan &lt;group&gt; &lt;command&gt;</code>——按命令组列出全部子命令与参数。等价写法：<code>python -m cancan_microstack.cli</code>。</span>
+      <span class="en"><code>cancan &lt;group&gt; &lt;command&gt;</code> — every subcommand and flag, grouped. Equivalent form: <code>python -m cancan_microstack.cli</code>.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">命令组</span><span class="en">Command groups</span></div>
+      <a href="#init">init</a>
+      <a href="#doctor">doctor</a>
+      <a href="#assets">assets</a>
+      <a href="#compose">compose</a>
+      <a href="#services">services</a>
+      <a href="#stack">stack</a>
+      <a href="#controllersrv">controllersrv</a>
+      <a href="#version">version</a>
+    </div>
+
+    <div class="note">
+      <span class="zh"><strong>为什么 stack 同时管两层？</strong><code>controllersrv</code> 运行在<strong>宿主机</strong>——它要直接操作 Docker/Podman，无法由 compose 管理；其余服务都是<strong>容器</strong>。因此 <code>stack up/down/status</code> 会同时管理宿主机进程（pidfile 守护）与容器栈（<code>compose</code>）。</span>
+      <span class="en"><strong>Why does stack manage two layers?</strong> <code>controllersrv</code> runs <strong>on the host</strong> — it drives Docker/Podman directly and cannot be managed by compose; everything else is a <strong>container</strong>. So <code>stack up/down/status</code> manages both the host process (a pidfile-tracked daemon) and the container stack (<code>compose</code>).</span>
+    </div>
+
+    <section id="init">
+      <h2><span class="zh">init — 脚手架最小可跑工作区</span><span class="en">init — scaffold a minimal runnable workspace</span></h2>
+      <p class="section-sub"><span class="zh">装完即用：生成业务 compose 样例、<code>.env</code>、overrides 骨架等。</span><span class="en">From install to runnable: a services compose sample, <code>.env</code>, an overrides skeleton, and more.</span></p>
+      <pre><code>cancan init [--workspace .]</code></pre>
+      <p><span class="zh">在目标工作区生成：</span><span class="en">In the target workspace it creates:</span></p>
+      <ul>
+        <li><code>docker-compose.services.yml</code> — <span class="zh">业务服务样例</span><span class="en">a business-services sample</span></li>
+        <li><code>.env</code> — <span class="zh">配置与密钥（自动写入唯一的 TOTP 加密 key）</span><span class="en">config &amp; secrets (a unique TOTP encryption key is generated for you)</span></li>
+        <li><code>cancan_overrides/</code> — <span class="zh">免 fork 覆盖骨架</span><span class="en">a fork-free override skeleton</span></li>
+        <li><span class="zh">以及 infra compose / Caddy·service Dockerfile / DDL / adminops 等运行时资产</span><span class="en">plus runtime assets: infra compose, Caddy/service Dockerfiles, DDL, adminops</span></li>
+      </ul>
+    </section>
+
+    <section id="doctor">
+      <h2><span class="zh">doctor — 起栈前环境与配置预检</span><span class="en">doctor — pre-flight environment &amp; config checks</span></h2>
+      <p class="section-sub"><span class="zh">一次性诊断常见的"起不来"原因。</span><span class="en">Diagnose the common "won't come up" causes in one shot.</span></p>
+      <pre><code>cancan doctor [--workspace .]</code></pre>
+      <p><span class="zh">检查项：</span><span class="en">It checks:</span></p>
+      <ul>
+        <li><span class="zh">容器引擎与 daemon 是否可用（docker / podman）</span><span class="en">container engine &amp; daemon availability (docker / podman)</span></li>
+        <li><span class="zh">宿主端口是否被占用</span><span class="en">host port conflicts</span></li>
+        <li><span class="zh">工作区是否可识别、运行时资产是否就绪</span><span class="en">workspace detection &amp; bootstrapped runtime assets</span></li>
+        <li><span class="zh"><code>AUTH_TOTP_FERNET_KEY</code> 是否设置；是否仍在用弱默认口令</span><span class="en">whether <code>AUTH_TOTP_FERNET_KEY</code> is set and whether weak default secrets remain</span></li>
+      </ul>
+      <p class="muted"><span class="zh">有阻塞问题返回非零退出码，便于做 CI 门禁。</span><span class="en">Returns a non-zero exit code on blocking issues — handy as a CI gate.</span></p>
+    </section>
+
+    <section id="assets">
+      <h2><span class="zh">assets — 检查与导出包内资产</span><span class="en">assets — inspect and export packaged assets</span></h2>
+      <p class="section-sub"><span class="zh">列出随库发布的静态文件，或把某个资产导出到工作区。</span><span class="en">List the static files shipped with the library, or export one into the workspace.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">命令</span><span class="en">Command</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th><th><span class="zh">关键参数</span><span class="en">Key arguments</span></th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>assets list [subdir]</code></td>
+            <td><span class="zh">列出资产；可选位置参数 <code>subdir</code> 限定子目录。</span><span class="en">List assets; the optional positional <code>subdir</code> filters to a subdirectory.</span></td>
+            <td><code>subdir</code> <span class="zh">（可选，位置参数）</span><span class="en">(optional, positional)</span></td>
+          </tr>
+          <tr>
+            <td><code>assets export &lt;logical_name&gt; &lt;destination&gt;</code></td>
+            <td><span class="zh">把资产复制到目标路径；目录用 copytree、文件用 copy2。</span><span class="en">Copy an asset to a destination; directories via copytree, files via copy2.</span></td>
+            <td><code>logical_name</code>, <code>destination</code> <span class="zh">（位置参数）</span><span class="en">(positional)</span>; <code>--overwrite</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 列出全部资产 / List all assets</span>
+cancan assets list
+
+<span class="tok-c"># 仅 docker 子目录 / Only the docker subdir</span>
+cancan assets list docker
+
+<span class="tok-c"># 导出 infra compose 到工作区，覆盖已存在文件</span>
+<span class="tok-c"># Export the infra compose into the workspace, overwriting if present</span>
+cancan assets export docker/docker-compose.infra.yml ./infra/docker-compose.infra.yml <span class="tok-f">--overwrite</span></code></pre>
+      <p class="muted"><span class="zh"><code>--overwrite</code> 未指定且目标已存在时，导出会报 <code>FileExistsError</code>。</span><span class="en">Without <code>--overwrite</code>, exporting onto an existing destination raises <code>FileExistsError</code>.</span></p>
+    </section>
+
+    <section id="compose">
+      <h2><span class="zh">compose — 合成 compose 栈文件</span><span class="en">compose — synthesize the compose stack file</span></h2>
+      <p class="section-sub"><span class="zh">以内置 infra compose 为基底，叠加业务 compose 与 override，输出一个可运行栈。</span><span class="en">Take the built-in infra compose as the base, layer in your services compose and overrides, and emit one runnable stack.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">命令</span><span class="en">Command</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>compose build</code></td><td><span class="zh">生成合并后的 compose 文件。</span><span class="en">Generate the merged compose file.</span></td></tr>
+        </tbody>
+      </table>
+      <h4><span class="zh">参数</span><span class="en">Arguments</span></h4>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+          <tr><td><code>--service-file</code></td><td>—</td><td><span class="zh">业务 compose 文件（可选）。</span><span class="en">Business compose file (optional).</span></td></tr>
+          <tr><td><code>--override</code></td><td>[]</td><td><span class="zh">额外 override compose 文件，可重复多次。</span><span class="en">Extra override compose files; repeatable.</span></td></tr>
+          <tr><td><code>--output</code></td><td><code>&lt;workspace&gt;/compose.cancan.yml</code></td><td><span class="zh">目标 compose 文件路径。</span><span class="en">Target compose file path.</span></td></tr>
+          <tr><td><code>--bootstrap</code> / <code>--no-bootstrap</code></td><td><code>--bootstrap</code></td><td><span class="zh">是否生成缺失的工作区运行文件（<code>cmd/*</code> 包装器、infra compose 导出等）。</span><span class="en">Whether to generate missing workspace run files (<code>cmd/*</code> wrappers, infra compose export, …).</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">合成规则：<strong>infra compose（基底）→ 业务 compose → override</strong>，后者深度合并并覆盖前者的同名字段。默认输出 <code>&lt;workspace&gt;/compose.cancan.yml</code>（除非显式 <code>--output</code>）。</span>
+        <span class="en">Merge order: <strong>infra compose (base) → services compose → overrides</strong>, each deep-merged and overriding same-named fields of the previous. The default output is <code>&lt;workspace&gt;/compose.cancan.yml</code> unless you pass <code>--output</code>.</span>
+      </p>
+      <pre><code><span class="tok-c"># 业务 compose + 两份 override，自定义输出路径</span>
+<span class="tok-c"># Services compose + two overrides, custom output path</span>
+cancan compose build \
+  <span class="tok-f">--workspace</span> . \
+  <span class="tok-f">--service-file</span> docker-compose.services.yml \
+  <span class="tok-f">--override</span> compose.local.yml \
+  <span class="tok-f">--override</span> compose.debug.yml \
+  <span class="tok-f">--output</span> compose.cancan.yml</code></pre>
+    </section>
+
+    <section id="services">
+      <h2><span class="zh">services — 前台运行内置服务</span><span class="en">services — run a bundled service in the foreground</span></h2>
+      <p class="section-sub"><span class="zh">直接前台启动单个服务，适合开发调试；启动前自动配置 workspace 与 overrides。</span><span class="en">Run a single service in the foreground — ideal for dev and debugging; the workspace and overrides are configured automatically before startup.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">命令</span><span class="en">Command</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>services run &lt;name&gt;</code></td><td><span class="zh">前台运行一个内置服务。<code>name</code> ∈ {<code>controllersrv</code>, <code>infrasrv</code>, <code>opsbffsrv</code>}。</span><span class="en">Run one bundled service in the foreground. <code>name</code> ∈ {<code>controllersrv</code>, <code>infrasrv</code>, <code>opsbffsrv</code>}.</span></td></tr>
+        </tbody>
+      </table>
+      <h4><span class="zh">参数</span><span class="en">Arguments</span></h4>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>name</code> <span class="zh">（位置参数）</span><span class="en">(positional)</span></td><td>—</td><td><span class="zh">服务名，限三选一。</span><span class="en">Service name; one of the three.</span></td></tr>
+          <tr><td><code>--host</code></td><td><code>0.0.0.0</code></td><td><span class="zh">绑定主机。</span><span class="en">Bind host.</span></td></tr>
+          <tr><td><code>--port</code></td><td><span class="zh">按服务而定</span><span class="en">per-service</span></td><td><span class="zh">绑定端口（controllersrv 默认 <code>22100</code>，infrasrv / opsbffsrv 默认 <code>8080</code>）。</span><span class="en">Bind port (controllersrv defaults to <code>22100</code>; infrasrv / opsbffsrv to <code>8080</code>).</span></td></tr>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 前台跑 infrasrv 调试 / Run infrasrv in the foreground for debugging</span>
+cancan services run infrasrv <span class="tok-f">--workspace</span> . <span class="tok-f">--port</span> <span class="tok-n">8080</span></code></pre>
+    </section>
+
+    <section id="stack">
+      <h2><span class="zh">stack — 整栈生命周期</span><span class="en">stack — full-stack lifecycle</span></h2>
+      <p class="section-sub"><span class="zh">同时管理宿主机 controllersrv 与容器栈：<code>up</code> / <code>down</code> / <code>status</code>。</span><span class="en">Manage the host controllersrv and the container stack together: <code>up</code> / <code>down</code> / <code>status</code>.</span></p>
+
+      <h3><code>stack up</code> — <span class="zh">合成 + bootstrap + 起 controllersrv + compose up</span><span class="en">build + bootstrap + start controllersrv + compose up</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+          <tr><td><code>--service-file</code></td><td><code>docker-compose.services.yml</code></td><td><span class="zh">业务 compose 文件。</span><span class="en">Business compose file.</span></td></tr>
+          <tr><td><code>--override</code></td><td>[]</td><td><span class="zh">额外 override 文件，可重复。</span><span class="en">Extra override files; repeatable.</span></td></tr>
+          <tr><td><code>--output</code></td><td><code>&lt;workspace&gt;/compose.cancan.yml</code></td><td><span class="zh">合成 compose 输出路径。</span><span class="en">Output path for the synthesized compose.</span></td></tr>
+          <tr><td><code>--bootstrap</code> / <code>--no-bootstrap</code></td><td><code>--bootstrap</code></td><td><span class="zh">是否生成缺失的工作区运行文件（含 adminops 资产）。</span><span class="en">Generate missing workspace run files (including adminops assets).</span></td></tr>
+          <tr><td><code>--with-controllersrv</code> / <code>--no-with-controllersrv</code></td><td><code>--with-controllersrv</code></td><td><span class="zh">起容器前是否确保宿主机 controllersrv 在运行。</span><span class="en">Ensure the host controllersrv is running before bringing up containers.</span></td></tr>
+          <tr><td><code>--controllersrv-host</code></td><td><code>127.0.0.1</code></td><td><span class="zh">controllersrv 绑定主机。</span><span class="en">controllersrv bind host.</span></td></tr>
+          <tr><td><code>--controllersrv-port</code></td><td><code>22100</code></td><td><span class="zh">controllersrv 绑定端口。</span><span class="en">controllersrv bind port.</span></td></tr>
+          <tr><td><code>--engine</code></td><td><code>auto</code></td><td><span class="zh">容器引擎：<code>auto</code> / <code>docker</code> / <code>podman</code>。</span><span class="en">Container engine: <code>auto</code> / <code>docker</code> / <code>podman</code>.</span></td></tr>
+          <tr><td><code>--build</code></td><td>false</td><td><span class="zh">强制重建镜像（等价 <code>compose up --build</code>）。</span><span class="en">Force an image rebuild (equivalent to <code>compose up --build</code>).</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 一键起栈，强制重建镜像，指定 podman</span>
+<span class="tok-c"># Bring up the stack, force rebuild, use podman</span>
+cancan stack up <span class="tok-f">--workspace</span> . <span class="tok-f">--service-file</span> docker-compose.services.yml <span class="tok-f">--engine</span> podman <span class="tok-f">--build</span></code></pre>
+
+      <h3><code>stack down</code> — <span class="zh">compose down + 停止 controllersrv</span><span class="en">compose down + stop controllersrv</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+          <tr><td><code>--compose-file</code></td><td><code>compose.cancan.yml</code></td><td><span class="zh">要使用的 compose 文件。</span><span class="en">Compose file to use.</span></td></tr>
+          <tr><td><code>--with-controllersrv</code> / <code>--no-with-controllersrv</code></td><td><code>--with-controllersrv</code></td><td><span class="zh">容器 down 后是否停止宿主机 controllersrv。</span><span class="en">Stop the host controllersrv after bringing containers down.</span></td></tr>
+          <tr><td><code>--volumes</code></td><td>false</td><td><span class="zh">连带删除命名数据卷（会丢数据）。</span><span class="en">Also remove named volumes (destroys data).</span></td></tr>
+          <tr><td><code>--engine</code></td><td><code>auto</code></td><td><span class="zh">容器引擎：<code>auto</code> / <code>docker</code> / <code>podman</code>。</span><span class="en">Container engine: <code>auto</code> / <code>docker</code> / <code>podman</code>.</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 关闭整栈并清空数据卷 / Tear down and wipe volumes</span>
+cancan stack down <span class="tok-f">--workspace</span> . <span class="tok-f">--volumes</span></code></pre>
+
+      <h3><code>stack status</code> — <span class="zh">controllersrv + compose ps</span><span class="en">controllersrv + compose ps</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+          <tr><td><code>--compose-file</code></td><td><code>compose.cancan.yml</code></td><td><span class="zh">要使用的 compose 文件。</span><span class="en">Compose file to use.</span></td></tr>
+          <tr><td><code>--engine</code></td><td><code>auto</code></td><td><span class="zh">容器引擎：<code>auto</code> / <code>docker</code> / <code>podman</code>。</span><span class="en">Container engine: <code>auto</code> / <code>docker</code> / <code>podman</code>.</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># controllersrv pid（读 pidfile）+ 容器 compose ps</span>
+<span class="tok-c"># controllersrv pid (from pidfile) + container compose ps</span>
+cancan stack status <span class="tok-f">--workspace</span> .</code></pre>
+    </section>
+
+    <section id="controllersrv">
+      <h2><span class="zh">controllersrv — 管理宿主机守护进程</span><span class="en">controllersrv — manage the host daemon</span></h2>
+      <p class="section-sub"><span class="zh">单独重启在宿主机后台运行的 controllersrv 守护进程。</span><span class="en">Restart the controllersrv daemon that runs in the background on the host.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">命令</span><span class="en">Command</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>controllersrv restart</code></td><td><span class="zh">先停止已有守护进程（若有），再在宿主机启动一个全新的 controllersrv。</span><span class="en">Stop the existing daemon (if any), then start a fresh controllersrv on the host.</span></td></tr>
+        </tbody>
+      </table>
+      <h4><span class="zh">参数</span><span class="en">Arguments</span></h4>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Flag</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>--workspace</code></td><td><code>.</code></td><td><span class="zh">工作区根目录。</span><span class="en">Workspace root.</span></td></tr>
+          <tr><td><code>--host</code></td><td><code>127.0.0.1</code></td><td><span class="zh">controllersrv 绑定主机。</span><span class="en">controllersrv bind host.</span></td></tr>
+          <tr><td><code>--port</code></td><td><code>22100</code></td><td><span class="zh">controllersrv 绑定端口。</span><span class="en">controllersrv bind port.</span></td></tr>
+          <tr><td><code>--engine</code></td><td><code>auto</code></td><td><span class="zh">传入 controllersrv 的容器引擎偏好：<code>auto</code> / <code>docker</code> / <code>podman</code>。</span><span class="en">Container engine preference propagated into controllersrv: <code>auto</code> / <code>docker</code> / <code>podman</code>.</span></td></tr>
+          <tr><td><code>--wait</code> / <code>--no-wait</code></td><td><code>--wait</code></td><td><span class="zh">重启后是否等待 <code>/internal/health</code> 就绪。</span><span class="en">Whether to wait for <code>/internal/health</code> after restart.</span></td></tr>
+          <tr><td><code>--timeout</code></td><td><code>8.0</code></td><td><span class="zh">等待健康检查的秒数，超时则报告。</span><span class="en">Seconds to wait for health before reporting a timeout.</span></td></tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 重启 controllersrv 并等待健康检查（最多 10 秒）</span>
+<span class="tok-c"># Restart controllersrv and wait for health (up to 10s)</span>
+cancan controllersrv restart <span class="tok-f">--workspace</span> . <span class="tok-f">--timeout</span> <span class="tok-n">10</span></code></pre>
+    </section>
+
+    <section id="version" style="border-bottom:none">
+      <h2><span class="zh">version — 显示版本</span><span class="en">version — show the version</span></h2>
+      <p class="section-sub"><span class="zh">打印当前安装的 cancan-microstack 版本号。</span><span class="en">Print the installed cancan-microstack version.</span></p>
+      <pre><code>cancan version</code></pre>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="architecture.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">总体架构</span><span class="en">Architecture</span></span></a>
+      <a class="next" href="python-api.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl">Python API</span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cancan Microstack — 可嵌入的基础设施微服务栈 / Embeddable infrastructure microstack</title>
+<meta name="description" content="Cancan Microstack: an embeddable Python toolkit bundling infrastructure microservices (controllersrv / infrasrv / opsbffsrv) with a workflow engine, an ops admin UI, Docker Compose orchestration and a unified CLI.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="home">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <div class="hero">
+      <span class="eyebrow">● <span class="zh">可嵌入的基础设施微服务栈</span><span class="en">Embeddable infrastructure microstack</span></span>
+      <h1>Cancan Microstack</h1>
+      <p class="lead">
+        <span class="zh">把一整套基础设施微服务（<strong>controllersrv / infrasrv / opsbffsrv</strong>）、一个可视化工作流引擎、一套运维管理前端，连同 Docker Compose 编排、数据库 DDL 与统一 CLI，打包成<strong>一个可 pip 安装的 Python 库</strong>——让业务仓库“只写业务代码”。</span>
+        <span class="en">Bundle a complete set of infrastructure microservices (<strong>controllersrv / infrasrv / opsbffsrv</strong>), a visual workflow engine, an ops admin UI — together with Docker Compose orchestration, database DDL and a unified CLI — into <strong>a single pip-installable Python library</strong>, so product repos contain business logic only.</span>
+      </p>
+      <div class="badges">
+        <img src="https://img.shields.io/pypi/v/cancan-microstack.svg?color=8b7cff" alt="PyPI">
+        <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
+        <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+      </div>
+      <div class="cta-row">
+        <a class="btn primary" href="quickstart.html"><span class="zh">快速开始 →</span><span class="en">Get started →</span></a>
+        <a class="btn ghost" href="architecture.html"><span class="zh">了解架构</span><span class="en">How it works</span></a>
+      </div>
+    </div>
+
+    <section>
+      <h2><span class="zh">这是什么</span><span class="en">What it is</span></h2>
+      <p class="section-sub"><span class="zh">一个“资产 + 合成 + 运行”三合一的微服务工具箱，并自带一整套运维控制面。</span><span class="en">A microstack toolkit unifying assets, compose synthesis and service running — with a full ops control plane built in.</span></p>
+      <p>
+        <span class="zh">在每个业务仓里反复搭基础设施（拷 compose、维护 DDL、起支撑服务）既重复又易漂移。Cancan 把这些固化成一个<strong>可升级、可分发的库</strong>：基础设施随<strong>库版本</strong>演进，而不是到处 copy-paste。它不仅给你现成的服务，还给你管理它们的<strong>工作流引擎</strong>与<strong>运维前端</strong>。</span>
+        <span class="en">Rebuilding infrastructure in every product repo (copying compose, maintaining DDL, standing up supporting services) is repetitive and drifts. Cancan freezes all of it into an <strong>upgradeable, distributable library</strong>: infrastructure evolves with a <strong>library version</strong> instead of copy-paste. Beyond ready-made services, it gives you a <strong>workflow engine</strong> and an <strong>ops UI</strong> to operate them.</span>
+      </p>
+      <div class="grid">
+        <div class="card"><span class="ic">📦</span><h4><span class="zh">资产即包资源</span><span class="en">Assets as resources</span></h4><p><span class="zh">compose / DDL / 脚本 / 运维前端随库发布，业务仓不再复制模板。</span><span class="en">compose / DDL / scripts / ops UI ship with the library — no template copying.</span></p></div>
+        <div class="card"><span class="ic">🧩</span><h4><span class="zh">Compose 合成</span><span class="en">Compose synthesis</span></h4><p><span class="zh">内置 infra compose 与业务 compose、override 深度合并成一个可运行栈。</span><span class="en">Deep-merge infra + services + overrides into one runnable stack.</span></p></div>
+        <div class="card"><span class="ic">🔀</span><h4><span class="zh">工作流引擎</span><span class="en">Workflow engine</span></h4><p><span class="zh">8 种节点、可视化编排、版本化、Celery 分布式调度。</span><span class="en">8 node types, visual orchestration, versioning, Celery scheduling.</span></p></div>
+        <div class="card"><span class="ic">🖥️</span><h4><span class="zh">运维前端</span><span class="en">Ops admin UI</span></h4><p><span class="zh">服务管理、工作流设计、日志检索、Caddy 网关、数据库管理一站式。</span><span class="en">Service ops, workflow design, log search, Caddy gateway, DB admin — all in one.</span></p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="zh">文档导航</span><span class="en">Documentation map</span></h2>
+      <p class="section-sub"><span class="zh">由浅入深：先上手，再深入原理与参考。</span><span class="en">Progressive: get hands-on first, then dive into concepts and reference.</span></p>
+      <div class="grid">
+        <a class="card" href="quickstart.html"><span class="ic">🚀</span><h4><span class="zh">快速开始</span><span class="en">Quick Start</span></h4><p><span class="zh">安装、一键起栈、第一个工作流。</span><span class="en">Install, bring up the stack, your first workflow.</span></p></a>
+        <a class="card" href="concepts.html"><span class="ic">💡</span><h4><span class="zh">核心概念</span><span class="en">Core Concepts</span></h4><p><span class="zh">microstack、工作区、覆盖、资产模型。</span><span class="en">microstack, workspace, overrides, asset model.</span></p></a>
+        <a class="card" href="architecture.html"><span class="ic">🏛️</span><h4><span class="zh">总体架构</span><span class="en">Architecture</span></h4><p><span class="zh">Facade + 三子系统 + runtime + 三服务。</span><span class="en">Facade + 3 subsystems + runtime + 3 services.</span></p></a>
+        <a class="card" href="service-infrasrv.html"><span class="ic">📇</span><h4><span class="zh">内置服务</span><span class="en">Bundled services</span></h4><p><span class="zh">controllersrv / infrasrv / opsbffsrv 详解。</span><span class="en">controllersrv / infrasrv / opsbffsrv in depth.</span></p></a>
+        <a class="card" href="workflow-concepts.html"><span class="ic">⚙️</span><h4><span class="zh">工作流引擎</span><span class="en">Workflow engine</span></h4><p><span class="zh">概念、节点、调度、API。</span><span class="en">Concepts, nodes, scheduling, API.</span></p></a>
+        <a class="card" href="adminops-ui.html"><span class="ic">🧰</span><h4><span class="zh">运维能力</span><span class="en">Operations</span></h4><p><span class="zh">运维前端、Caddy 网关、日志、注册健康。</span><span class="en">Admin UI, Caddy gateway, logging, registry.</span></p></a>
+        <a class="card" href="cli.html"><span class="ic">⌨️</span><h4><span class="zh">CLI 参考</span><span class="en">CLI Reference</span></h4><p><span class="zh">assets / compose / services / stack。</span><span class="en">assets / compose / services / stack.</span></p></a>
+        <a class="card" href="data-model.html"><span class="ic">🗄️</span><h4><span class="zh">数据模型</span><span class="en">Data Model</span></h4><p><span class="zh">infra / ops 共 19 张表。</span><span class="en">19 tables across infra / ops.</span></p></a>
+        <a class="card" href="api-reference.html"><span class="ic">🔗</span><h4><span class="zh">API 索引</span><span class="en">API Index</span></h4><p><span class="zh">100+ HTTP 接口总览。</span><span class="en">Overview of 100+ HTTP endpoints.</span></p></a>
+      </div>
+    </section>
+
+    <section style="border-bottom:none">
+      <h2><span class="zh">系统一览</span><span class="en">System at a glance</span></h2>
+      <table>
+        <thead><tr><th><span class="zh">维度</span><span class="en">Dimension</span></th><th><span class="zh">规模</span><span class="en">Scale</span></th></tr></thead>
+        <tbody>
+          <tr><td><span class="zh">内置服务</span><span class="en">Bundled services</span></td><td>controllersrv · infrasrv · opsbffsrv</td></tr>
+          <tr><td><span class="zh">HTTP 接口</span><span class="en">HTTP endpoints</span></td><td>100+</td></tr>
+          <tr><td><span class="zh">工作流节点类型</span><span class="en">Workflow node types</span></td><td>8 — START / ACTION / TRANSFORM / LOGIC / FORK / JOIN / LOOP / END</td></tr>
+          <tr><td><span class="zh">数据存储</span><span class="en">Data stores</span></td><td>PostgreSQL · MongoDB · Redis</td></tr>
+          <tr><td><span class="zh">消息 / 调度</span><span class="en">Messaging / scheduling</span></td><td>RabbitMQ · Celery</td></tr>
+          <tr><td><span class="zh">运维前端页面</span><span class="en">Admin UI screens</span></td><td>18+</td></tr>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:18px">
+        <span class="zh">构建于已发布的姊妹库：</span><span class="en">Built on published sibling libraries: </span>
+        <span class="pill">linglong-web</span><span class="pill">dragonfly-container</span>
+      </p>
+    </section>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

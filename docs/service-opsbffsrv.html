@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>opsbffsrv — 运维 BFF / Ops Backend-for-Frontend · Cancan Microstack</title>
+<meta name="description" content="opsbffsrv: the ops backend-for-frontend that aggregates APIs for the adminops UI, guards them with two-step auth, and forwards service-management requests to infrasrv.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="opsbffsrv">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title">opsbffsrv — <span class="zh">运维 BFF</span><span class="en">Ops Backend-for-Frontend</span></h1>
+    <p class="page-lead">
+      <span class="zh">为运维前端（adminops UI）聚合接口的 BFF：一侧用两步认证守护前端，另一侧把服务管理请求转发给 infrasrv，并整合服务运维、日志、工作流运维等能力。</span>
+      <span class="en">The BFF that aggregates APIs for the ops frontend (adminops UI): it guards the frontend with two-step auth on one side, forwards service-management requests to infrasrv on the other, and folds in service ops, logging and workflow ops.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#overview"><span class="zh">概述</span><span class="en">Overview</span></a>
+      <a href="#auth"><span class="zh">认证与授权</span><span class="en">Auth</span></a>
+      <a href="#service-ops"><span class="zh">服务运维</span><span class="en">Service Ops</span></a>
+      <a href="#logs"><span class="zh">业务日志查询</span><span class="en">Business Logs</span></a>
+      <a href="#workflow"><span class="zh">工作流运维</span><span class="en">Workflow Ops</span></a>
+    </div>
+
+    <section id="overview">
+      <h2><span class="zh">概述</span><span class="en">Overview</span></h2>
+      <p class="section-sub"><span class="zh">前端的唯一后端入口：聚合、认证、转发。</span><span class="en">The frontend's single backend entry: aggregate, authenticate, forward.</span></p>
+      <p>
+        <span class="zh">opsbffsrv 扮演经典 BFF 角色——前端不直接触达 infrasrv/controllersrv，而是统一调 opsbffsrv。它做三件事：(1) 用 <strong>session Cookie</strong> 守护除登录外的所有接口；(2) 把服务启停、注册概览、实例统计等请求<strong>转发给 infrasrv</strong>（经 <code>infrasrv_api</code> 客户端）并裁剪/聚合成前端友好的形状；(3) 自持 <strong>认证</strong>、<strong>业务日志检索</strong>、<strong>工作流运维</strong>与 <strong>Caddy 网关 / 数据库管理</strong>能力。</span>
+        <span class="en">opsbffsrv plays the classic BFF role — the frontend never touches infrasrv/controllersrv directly, only opsbffsrv. It does three things: (1) guards every endpoint except login with a <strong>session cookie</strong>; (2) <strong>forwards</strong> service start/stop, registry overview and instance stats to <strong>infrasrv</strong> (via the <code>infrasrv_api</code> client) and reshapes the result for the UI; (3) owns <strong>auth</strong>, <strong>business-log search</strong>, <strong>workflow ops</strong> and <strong>Caddy gateway / DB admin</strong> capabilities.</span>
+      </p>
+
+      <div class="grid">
+        <div class="card"><span class="ic">🛂</span><h4><span class="zh">认证保护</span><span class="en">Auth-guarded</span></h4><p><span class="zh">auth middleware 校验 <code>ops_session</code> Cookie；仅 <code>/auth/*</code> 与内部健康探针豁免。</span><span class="en">An auth middleware checks the <code>ops_session</code> cookie; only <code>/auth/*</code> and internal health probes are exempt.</span></p></div>
+        <div class="card"><span class="ic">↪️</span><h4><span class="zh">向 infrasrv 转发</span><span class="en">Forwards to infrasrv</span></h4><p><span class="zh">服务启停、注册、实例与日志类请求经 <code>infrasrv_api</code> 客户端转发，BFF 只做聚合裁剪。</span><span class="en">Service start/stop, registry, instance and log calls are forwarded via the <code>infrasrv_api</code> client; the BFF only aggregates and trims.</span></p></div>
+        <div class="card"><span class="ic">🧰</span><h4><span class="zh">自持运维能力</span><span class="en">Owns ops surfaces</span></h4><p><span class="zh">工作流运维、业务日志检索、Caddy 网关、数据库管理由 opsbffsrv 直接承载。</span><span class="en">Workflow ops, business-log search, the Caddy gateway and DB admin are hosted directly by opsbffsrv.</span></p></div>
+        <div class="card"><span class="ic">🔐</span><h4><span class="zh">凭据安全</span><span class="en">Credential safety</span></h4><p><span class="zh">密码用 <code>bcrypt</code> 哈希，TOTP secret 用 <code>Fernet</code> 加密落库。</span><span class="en">Passwords are <code>bcrypt</code>-hashed; the TOTP secret is <code>Fernet</code>-encrypted at rest.</span></p></div>
+      </div>
+
+      <div class="note">
+        <span class="zh">所有接口前缀为 <code>/v1/opsbffsrv</code>，响应为 <code>APIResponse</code> 信封，下表“关键字段”指 <code>data</code> 内容。</span>
+        <span class="en">All endpoints are prefixed <code>/v1/opsbffsrv</code>; responses use the <code>APIResponse</code> envelope, and "key fields" below describe <code>data</code>.</span>
+      </div>
+
+      <div class="note tip">
+        <span class="zh"><strong>本页不重复的部分：</strong>Caddy 网关管理（<code>caddy/routes</code>、<code>rate-limits</code>、<code>certificates</code>、<code>stats</code>、<code>logs</code>）见 <a href="caddy.html">Caddy 网关</a>；数据库 Schema 管理与初始化（<code>db/schema/*</code>、<code>db_init/*</code>）及 pgweb/redis-commander/mongo-express/rabbitmq 代理见 <a href="data-model.html">数据模型</a> 与 <a href="deployment.html">部署与安全</a>。本页聚焦认证、服务运维、业务日志与工作流运维。</span>
+        <span class="en"><strong>Covered elsewhere:</strong> Caddy gateway management (<code>caddy/routes</code>, <code>rate-limits</code>, <code>certificates</code>, <code>stats</code>, <code>logs</code>) is in <a href="caddy.html">Caddy Gateway</a>; DB schema admin & init (<code>db/schema/*</code>, <code>db_init/*</code>) and the pgweb/redis-commander/mongo-express/rabbitmq proxies are in <a href="data-model.html">Data Model</a> and <a href="deployment.html">Deployment & Security</a>. This page focuses on auth, service ops, business logs and workflow ops.</span>
+      </div>
+    </section>
+
+    <section id="auth">
+      <h2><span class="zh">认证与授权 API</span><span class="en">Auth & Authorization API</span></h2>
+      <p class="section-sub"><span class="zh">两步登录：密码 + 验证码 → TOTP；通过后下发 session Cookie。</span><span class="en">Two-step login: password + captcha → TOTP, then a session cookie is issued.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/auth/captcha</code></td>
+            <td><span class="zh">取图形验证码</span><span class="en">Get image captcha</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>captcha_id</code>, <code>image_base64</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/login</code></td>
+            <td><span class="zh">第一步：用户名+密码+验证码</span><span class="en">Step 1: username + password + captcha</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>username</code>, <code>password</code>, <code>captcha_id</code>, <code>captcha_answer</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>next_step</code>(totp_bind/totp_verify), <code>temp_token</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/setup</code></td>
+            <td><span class="zh">取 TOTP 绑定二维码</span><span class="en">Get TOTP provisioning QR</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>temp_token</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>otpauth_uri</code>, <code>qr_code_base64</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/bind</code></td>
+            <td><span class="zh">第二步(首次)：完成 TOTP 绑定</span><span class="en">Step 2 (first time): bind TOTP</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>temp_token</code>, <code>totp_code</code> · <span class="zh">响应</span><span class="en">Resp</span>: 设置 <code>ops_session</code> Cookie</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/verify</code></td>
+            <td><span class="zh">第二步(常规)：TOTP 验证</span><span class="en">Step 2 (regular): verify TOTP</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>temp_token</code>, <code>totp_code</code> · <span class="zh">响应</span><span class="en">Resp</span>: 设置 <code>ops_session</code> Cookie</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/auth/session</code></td>
+            <td><span class="zh">校验当前 session</span><span class="en">Check current session</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>ops_session</code> Cookie · <span class="zh">响应</span><span class="en">Resp</span>: <code>authenticated</code>, <code>username</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">登录是<strong>两阶段</strong>：<code>login</code> 校验密码（<code>bcrypt</code>）与图形验证码，并按 IP 锁定防暴破，成功后返回短时 <code>temp_token</code> 与 <code>next_step</code>。未绑过 TOTP 走 <code>totp/setup</code> + <code>totp/bind</code>；已绑过则直接 <code>totp/verify</code>。两者成功都把会话 token 写入 <code>HttpOnly</code> 的 <code>ops_session</code> Cookie（<code>SameSite=lax</code>，可配 <code>Secure</code>）。TOTP secret 以 <code>Fernet</code> 加密存储。</span>
+        <span class="en">Login is <strong>two-phase</strong>: <code>login</code> validates the password (<code>bcrypt</code>) and image captcha with per-IP lockout against brute force, then returns a short-lived <code>temp_token</code> and a <code>next_step</code>. First-time users go through <code>totp/setup</code> + <code>totp/bind</code>; returning users go straight to <code>totp/verify</code>. Either success writes the session token into an <code>HttpOnly</code> <code>ops_session</code> cookie (<code>SameSite=lax</code>, optional <code>Secure</code>). The TOTP secret is stored <code>Fernet</code>-encrypted.</span>
+      </p>
+    </section>
+
+    <section id="service-ops">
+      <h2><span class="zh">服务运维 API</span><span class="en">Service Ops API</span></h2>
+      <p class="section-sub"><span class="zh">配置、注册概览、异步启停、操作查询、实例与服务日志——多数转发自 infrasrv。</span><span class="en">Config, registry overview, async start/stop, operation queries, instances and service logs — mostly forwarded from infrasrv.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_config</code></td>
+            <td><span class="zh">取单个服务配置</span><span class="en">Get one service config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>service_name</code>, <code>items[{key,value}]</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_config/all</code></td>
+            <td><span class="zh">取全部配置</span><span class="en">Get all configs</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>services[{service_name, items[]}]</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/service_config</code></td>
+            <td><span class="zh">新增配置</span><span class="en">Insert config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> (query), <code>conf_dict</code> (body) · <span class="zh">响应</span><span class="en">Resp</span>: <code>message</code>, <code>push_result</code></td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/opsbffsrv/service_config</code></td>
+            <td><span class="zh">更新配置</span><span class="en">Update config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>conf_dict</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>message</code>, <code>push_result</code></td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/opsbffsrv/service_config</code></td>
+            <td><span class="zh">删配置项</span><span class="en">Delete config key</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>conf_key</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instances</code></td>
+            <td><span class="zh">查某服务实例</span><span class="en">List a service's instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>only_healthy</code>(def true)</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instances/all</code></td>
+            <td><span class="zh">查所有实例</span><span class="en">List all instances</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>instances[]</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instance</code></td>
+            <td><span class="zh">查单个实例</span><span class="en">Get one instance</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>instance_id</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/services</code></td>
+            <td><span class="zh">列出所有服务名</span><span class="en">List all service names</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">服务名列表</span><span class="en">service names</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/services/overview</code></td>
+            <td><span class="zh">服务概览</span><span class="en">Services overview</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>service_name</code>, <code>service_type</code>, <code>desired_replicas</code>, <code>actual_replicas</code>, <code>expected_status</code>, <code>config_version</code> …</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/start</code></td>
+            <td><span class="zh">异步启动服务</span><span class="en">Async start service</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>operation_params</code>, <code>initiated_by</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>operation_id</code>, <code>status</code>, <code>message</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/stop</code></td>
+            <td><span class="zh">异步停止服务</span><span class="en">Async stop service</span></td>
+            <td><span class="zh">同 start</span><span class="en">Same as start</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/restart</code></td>
+            <td><span class="zh">异步重启服务</span><span class="en">Async restart service</span></td>
+            <td><span class="zh">同 start</span><span class="en">Same as start</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/operation/status</code></td>
+            <td><span class="zh">查异步操作状态</span><span class="en">Operation status</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>operation{ status, result, error_message, started_at, completed_at, retry_count }</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/operation/list</code></td>
+            <td><span class="zh">列出操作历史</span><span class="en">List operation history</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>status</code>, <code>limit</code>(def 50), <code>offset</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>operations[]</code>, <code>count</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/list</code></td>
+            <td><span class="zh">列出服务实例</span><span class="en">List service instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>status</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/detail</code></td>
+            <td><span class="zh">实例详情</span><span class="en">Instance detail</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>instance_id</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/stats</code></td>
+            <td><span class="zh">实例统计</span><span class="en">Instance stats</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>total</code>, <code>by_status</code>, <code>by_health</code>, <code>instances[]</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_logs</code></td>
+            <td><span class="zh">查服务动作日志</span><span class="en">Service action logs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>action_type</code>, <code>action_status</code>, <code>limit</code>(def 100) · <span class="zh">响应</span><span class="en">Resp</span>: <code>logs[]</code>, <code>total</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_logs/by_service</code></td>
+            <td><span class="zh">按服务取日志</span><span class="en">Logs by service</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>limit</code>(def 50) · <span class="zh">响应</span><span class="en">Resp</span>: <code>logs[]</code>, <code>total</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="logs">
+      <h2><span class="zh">业务日志查询 API</span><span class="en">Business Log Search API</span></h2>
+      <p class="section-sub"><span class="zh">跨服务、可分页的结构化业务日志检索（落 MongoDB）。</span><span class="en">Paginated, structured cross-service business-log search (backed by MongoDB).</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/logs/search</code></td>
+            <td><span class="zh">检索业务日志</span><span class="en">Search business logs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_names[]</code>, <code>start_time</code>, <code>end_time</code>, <code>levels[]</code>, <code>keywords[]</code>, <code>method_names[]</code>, <code>ip_addresses[]</code>, <code>instance_ids[]</code>, <code>page</code>, <code>page_size</code>(≤500) · <span class="zh">响应</span><span class="en">Resp</span>: <code>items[{event_id, service_name, level, message, timestamp, trace_id, func_name …}]</code>, <code>total</code>, <code>has_next</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="workflow" style="border-bottom:none">
+      <h2><span class="zh">工作流运维 API</span><span class="en">Workflow Ops API</span></h2>
+      <p class="section-sub"><span class="zh">面向运维前端的工作流全生命周期：定义、版本、运行、节点日志与引擎告警。</span><span class="en">Full workflow lifecycle for the ops UI: definitions, versions, runs, node logs and engine alerts.</span></p>
+      <h3><span class="zh">定义管理</span><span class="en">Definition management</span></h3>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows</code></td>
+            <td><span class="zh">列出工作流</span><span class="en">List workflows</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>keyword</code>, <code>status</code>(ACTIVE/INACTIVE), <code>page</code>, <code>page_size</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>list[]</code>, <code>total</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows</code></td>
+            <td><span class="zh">创建工作流</span><span class="en">Create workflow</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>name</code>, <code>description</code>, <code>schedule</code>, <code>graph_data</code>, <code>nodes_config</code>, <code>global_context</code>, <code>is_active</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}</code></td>
+            <td><span class="zh">取工作流详情</span><span class="en">Get workflow detail</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path) · <span class="zh">响应</span><span class="en">Resp</span>: <code>graph_data</code>, <code>nodes_config</code>, <code>version</code>, <code>is_active</code> …</td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}</code></td>
+            <td><span class="zh">更新工作流</span><span class="en">Update workflow</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path), <code>graph_data</code>, <code>nodes_config</code>, <code>change_summary</code> …</td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}</code></td>
+            <td><span class="zh">删除工作流</span><span class="en">Delete workflow</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path)</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/toggle</code></td>
+            <td><span class="zh">启用/停用</span><span class="en">Toggle active</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path) · <span class="zh">响应</span><span class="en">Resp</span>: <code>is_active</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/duplicate</code></td>
+            <td><span class="zh">复制工作流</span><span class="en">Duplicate workflow</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path), <code>name</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/publish</code></td>
+            <td><span class="zh">发布工作流</span><span class="en">Publish workflow</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path)</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/validate</code></td>
+            <td><span class="zh">校验工作流图</span><span class="en">Validate workflow graph</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path) · <span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">校验结果</span><span class="en">validation result</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/versions</code></td>
+            <td><span class="zh">列出历史版本</span><span class="en">List versions</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path), <code>limit</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>versions[{version, change_summary, created_time}]</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/rollback</code></td>
+            <td><span class="zh">回滚到指定版本</span><span class="en">Rollback to a version</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path), <code>target_version</code>, <code>reason</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/stats</code></td>
+            <td><span class="zh">工作流统计</span><span class="en">Workflow stats</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>total_definitions</code>, <code>active_definitions</code>, <code>total_runs</code>, <code>runs_today</code>, <code>success_rate_24h</code>, <code>running_runs</code> …</td></tr>
+        </tbody>
+      </table>
+      <h3><span class="zh">运行与告警</span><span class="en">Runs & alerts</span></h3>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/trigger</code></td>
+            <td><span class="zh">手动触发运行</span><span class="en">Trigger a run</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>id</code> (path), <code>trigger_context</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>run_id</code>, <code>dispatch_status</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs</code></td>
+            <td><span class="zh">列出运行记录</span><span class="en">List runs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>workflow_id</code>, <code>reqid</code>, <code>status</code>, <code>date_from</code>, <code>date_to</code>, <code>page</code>, <code>page_size</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>list[{id, status, trigger_type, started_at, duration_ms}]</code>, <code>total</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs/{run_id}/graph</code></td>
+            <td><span class="zh">取运行图状态</span><span class="en">Run graph status</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>run_id</code> (path) · <span class="zh">响应</span><span class="en">Resp</span>: <code>status</code>, <code>nodes[{node_id, type, status}]</code>, <code>edges[]</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs/{run_id}/nodes/{node_id}/logs</code></td>
+            <td><span class="zh">取节点执行日志</span><span class="en">Node execution logs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>run_id</code>, <code>node_id</code> (path) · <span class="zh">响应</span><span class="en">Resp</span>: <code>histories[{loop_index, status, logs[{attempt_no, request_snapshot, response_snapshot, error_detail}]}]</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts</code></td>
+            <td><span class="zh">列出引擎告警</span><span class="en">List engine alerts</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>status</code>, <code>severity</code>, <code>run_id</code>, <code>page</code>, <code>page_size</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>list[{id, severity, category, reason, status}]</code>, <code>total</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts/{alert_id}/ack</code></td>
+            <td><span class="zh">确认告警</span><span class="en">Acknowledge alert</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>alert_id</code> (path), <code>operator</code>, <code>note</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>status</code>, <code>acknowledged_by</code>, <code>acknowledged_at</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts/{alert_id}/resolve</code></td>
+            <td><span class="zh">解决告警</span><span class="en">Resolve alert</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>alert_id</code> (path), <code>operator</code>, <code>note</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>status</code>, <code>resolved_by</code>, <code>resolved_at</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="service-infrasrv.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl">infrasrv</span></a>
+      <a class="next" href="workflow-concepts.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">工作流·概念与状态机</span><span class="en">Workflow Concepts</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

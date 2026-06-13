@@ -1,0 +1,4 @@
+# Generated static assets live here.
+# 静态资源构建产物（生成物，不提交 Git）
+*
+!.gitignore

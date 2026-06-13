@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>infrasrv — 基础设施服务 / Infrastructure Service · Cancan Microstack</title>
+<meta name="description" content="infrasrv: the infrastructure service aggregating service config, registry & discovery, health checks, service management, operation/instance orchestration and the workflow engine.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="infrasrv">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title">infrasrv — <span class="zh">基础设施服务</span><span class="en">Infrastructure Service</span></h1>
+    <p class="page-lead">
+      <span class="zh">栈内的基础设施中枢：聚合服务配置管理、服务注册与发现、健康检查、服务管理，以及操作（operation）与实例（instance）编排和工作流引擎。controllersrv 与 opsbffsrv 都把状态托管给它。</span>
+      <span class="en">The infrastructure hub inside the stack: it aggregates service config, registry & discovery, health checks, service management, plus operation and instance orchestration and the workflow engine. Both controllersrv and opsbffsrv park their state here.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#overview"><span class="zh">概述</span><span class="en">Overview</span></a>
+      <a href="#config"><span class="zh">服务配置管理</span><span class="en">Service Config</span></a>
+      <a href="#registry"><span class="zh">注册与发现</span><span class="en">Registry & Discovery</span></a>
+      <a href="#mgmt"><span class="zh">服务管理</span><span class="en">Service Management</span></a>
+      <a href="#operation"><span class="zh">操作管理（内部）</span><span class="en">Operation (internal)</span></a>
+      <a href="#instance"><span class="zh">实例管理（内部）</span><span class="en">Instance (internal)</span></a>
+      <a href="#logs"><span class="zh">服务日志</span><span class="en">Service Logs</span></a>
+      <a href="#hooks"><span class="zh">钩子监控</span><span class="en">Hook Monitoring</span></a>
+    </div>
+
+    <section id="overview">
+      <h2><span class="zh">概述</span><span class="en">Overview</span></h2>
+      <p class="section-sub"><span class="zh">微服务栈的协调面：谁在哪、是否健康、配置是什么、操作进行到哪一步。</span><span class="en">The stack's coordination plane: who is where, is it healthy, what is its config, and where an operation stands.</span></p>
+      <p>
+        <span class="zh">infrasrv 把分散的“运行时事实”集中持久化：服务的<strong>配置</strong>（service_config）、注册<strong>实例</strong>（service_instance / service_info）、异步<strong>操作</strong>记录（service_operation）、动作<strong>日志</strong>（service_action_log），以及工作流定义与运行。controllersrv 执行容器操作时，回写操作/实例状态到这里；opsbffsrv 则从这里读取概览供前端展示。</span>
+        <span class="en">infrasrv centralises and persists the scattered "runtime facts": service <strong>config</strong> (service_config), registered <strong>instances</strong> (service_instance / service_info), async <strong>operation</strong> records (service_operation), action <strong>logs</strong> (service_action_log), plus workflow definitions and runs. When controllersrv runs a container operation it writes operation/instance state back here; opsbffsrv reads the overview from here for the UI.</span>
+      </p>
+
+      <div class="grid">
+        <div class="card"><span class="ic">🗂️</span><h4><span class="zh">配置中心</span><span class="en">Config store</span></h4><p><span class="zh">键值化的服务配置 CRUD，并能主动把变更 <code>push</code> 给运行中的实例。</span><span class="en">Key-value service-config CRUD, with an active <code>push</code> of changes to running instances.</span></p></div>
+        <div class="card"><span class="ic">📡</span><h4><span class="zh">注册与发现</span><span class="en">Registry</span></h4><p><span class="zh">实例注册 / 注销 / 查询，缓存加持，配合批量健康检查。</span><span class="en">Instance register / deregister / lookup, cache-backed, with batch health checks.</span></p></div>
+        <div class="card"><span class="ic">🧱</span><h4><span class="zh">内部编排面</span><span class="en">Internal control plane</span></h4><p><span class="zh"><code>internal/operation/*</code> 与 <code>internal/instance/*</code> 供 controllersrv 回写状态、分配端口、统计副本。</span><span class="en"><code>internal/operation/*</code> and <code>internal/instance/*</code> let controllersrv write back state, allocate ports and track replicas.</span></p></div>
+        <div class="card"><span class="ic">🔀</span><h4><span class="zh">工作流引擎</span><span class="en">Workflow engine</span></h4><p><span class="zh">工作流定义、版本、运行与告警的领域层就在 infrasrv，详见工作流系列页面。</span><span class="en">The domain layer for workflow definitions, versions, runs and alerts lives in infrasrv — see the workflow pages.</span></p></div>
+      </div>
+
+      <div class="note">
+        <span class="zh"><strong>命名约定：</strong>带 <code>internal/</code> 前缀的接口是<strong>服务间内部接口</strong>（主要供 controllersrv 调用），不直接面向前端；其余接口供 opsbffsrv 聚合或服务自身使用。所有响应为 <code>APIResponse</code> 信封，下表“关键字段”指 <code>data</code> 内容。工作流引擎 API 不在本页展开。</span>
+        <span class="en"><strong>Convention:</strong> endpoints prefixed <code>internal/</code> are <strong>service-to-service</strong> (chiefly called by controllersrv), not front-facing; the rest serve opsbffsrv aggregation or the service itself. Responses use the <code>APIResponse</code> envelope; "key fields" below describe <code>data</code>. Workflow-engine endpoints are not expanded here.</span>
+      </div>
+
+      <div class="note tip">
+        <span class="zh"><strong>工作流引擎 API：</strong>infrasrv 还承载 <code>/v1/infrasrv/workflows*</code>、<code>/runs*</code> 与 <code>/callbacks/{node_instance_id}</code> 等工作流接口（定义、版本、回滚、触发、运行图状态、节点历史、外部回调、引擎告警）。这些不在本页详述，请见 <a href="workflow-concepts.html">工作流·概念与状态机</a> 与 <a href="workflow-api.html">工作流·API 参考</a>。</span>
+        <span class="en"><strong>Workflow engine API:</strong> infrasrv also hosts the workflow endpoints <code>/v1/infrasrv/workflows*</code>, <code>/runs*</code> and <code>/callbacks/{node_instance_id}</code> (definitions, versions, rollback, trigger, run-graph status, node history, external callback, engine alerts). These are covered not here but in <a href="workflow-concepts.html">Workflow Concepts & State</a> and <a href="workflow-api.html">Workflow API</a>.</span>
+      </div>
+    </section>
+
+    <section id="config">
+      <h2><span class="zh">服务配置管理 API</span><span class="en">Service Config API</span></h2>
+      <p class="section-sub"><span class="zh">键值化配置的 CRUD，并可触发向实例推送。</span><span class="en">CRUD over key-value config, with a push-to-instances trigger.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_config</code></td>
+            <td><span class="zh">取单个服务配置</span><span class="en">Get one service's config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> (query)</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_configs</code></td>
+            <td><span class="zh">取全部服务配置</span><span class="en">Get all service configs</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">全量配置字典</span><span class="en">map of all configs</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service_config</code></td>
+            <td><span class="zh">新增配置</span><span class="en">Insert config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> (query), <code>conf_data</code> (body) · <span class="zh">响应</span><span class="en">Resp</span>: <code>message</code></td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/infrasrv/service_config</code></td>
+            <td><span class="zh">更新配置</span><span class="en">Update config</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> (query), <code>conf_data</code> (body)</td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/service_config</code></td>
+            <td><span class="zh">删除某配置项</span><span class="en">Delete a config key</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>conf_key</code> (query)</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/config/push</code></td>
+            <td><span class="zh">主动把配置推给实例</span><span class="en">Push config to instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> (opt) · <span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">推送结果</span><span class="en">push result</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="registry">
+      <h2><span class="zh">服务注册与发现 API</span><span class="en">Registry & Discovery API</span></h2>
+      <p class="section-sub"><span class="zh">实例注册、注销、查询，加批量健康检查。</span><span class="en">Register, deregister and query instances, plus batch health checks.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/registry/register</code></td>
+            <td><span class="zh">注册实例</span><span class="en">Register an instance</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>instance_id</code>, <code>host</code>, <code>port</code>, <code>internal_port</code>, <code>service_type</code>, <code>health_check_path</code>, <code>desired_replicas</code>, <code>container_name</code>, <code>compose_service_name</code>, <code>config_version</code>, <code>service_metadata</code> …</td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/registry/deregister</code></td>
+            <td><span class="zh">注销实例</span><span class="en">Deregister an instance</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>instance_id</code> (query)</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/registry/instances</code></td>
+            <td><span class="zh">查某服务的实例</span><span class="en">List a service's instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>only_healthy</code> (def true) · <span class="zh">响应</span><span class="en">Resp</span>: <code>instances[]</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/health/check_instances</code></td>
+            <td><span class="zh">批量健康检查所有实例</span><span class="en">Batch health-check all instances</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">检查结果汇总</span><span class="en">check-result summary</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh"><code>register</code> 的请求体很宽：除地址（<code>host</code>/<code>port</code>/<code>internal_port</code>）外，还携带服务画像（<code>service_type</code>、<code>owner</code>、<code>deploy_region</code>）、副本意图（<code>desired_replicas</code>、<code>scale_policy</code>）、健康配置（<code>health_check_path</code>、<code>health_check_url</code>）与容器关联（<code>container_name</code>、<code>compose_service_name</code>）。注册信息被缓存以加速发现查询。</span>
+        <span class="en"><code>register</code> takes a broad body: beyond the address (<code>host</code>/<code>port</code>/<code>internal_port</code>) it carries the service profile (<code>service_type</code>, <code>owner</code>, <code>deploy_region</code>), replica intent (<code>desired_replicas</code>, <code>scale_policy</code>), health config (<code>health_check_path</code>, <code>health_check_url</code>) and container linkage (<code>container_name</code>, <code>compose_service_name</code>). Registrations are cached to speed up discovery lookups.</span>
+      </p>
+    </section>
+
+    <section id="mgmt">
+      <h2><span class="zh">服务管理 API</span><span class="en">Service Management API</span></h2>
+      <p class="section-sub"><span class="zh">供 opsbffsrv 调用的服务启停重启入口，带 operation 追踪。</span><span class="en">Start/stop/restart entry points called by opsbffsrv, with operation tracking.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/start</code></td>
+            <td><span class="zh">启动服务</span><span class="en">Start a service</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code>, <code>service_name</code>, <code>operation_type</code>, <code>operation_params</code>, <code>initiated_by</code>, <code>initiated_from</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>operation_id</code>, <code>status</code>, <code>result</code>, <code>started_at</code>, <code>completed_at</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/stop</code></td>
+            <td><span class="zh">停止服务</span><span class="en">Stop a service</span></td>
+            <td><span class="zh">同 start</span><span class="en">Same shape as start</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/restart</code></td>
+            <td><span class="zh">重启服务</span><span class="en">Restart a service</span></td>
+            <td><span class="zh">同 start</span><span class="en">Same shape as start</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="operation">
+      <h2><span class="zh">操作管理（内部）API</span><span class="en">Operation Management (internal) API</span></h2>
+      <p class="section-sub"><span class="zh">异步操作记录的生命周期：创建、更新、查询、超时巡检。</span><span class="en">Lifecycle of async operation records: create, update, query and timeout sweeping.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/operation/create</code></td>
+            <td><span class="zh">创建操作记录</span><span class="en">Create operation record</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code>, <code>operation_type</code>, <code>service_name</code>, <code>operation_params</code>, <code>status</code>(def pending), <code>initiated_by</code>, <code>initiated_from</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/operation/update</code></td>
+            <td><span class="zh">更新操作状态/结果</span><span class="en">Update status/result</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code>, <code>status</code>, <code>started_at</code>, <code>completed_at</code>, <code>result</code>, <code>error_message</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/get</code></td>
+            <td><span class="zh">按 ID 取操作</span><span class="en">Get operation by id</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code> (query) · <span class="zh">响应</span><span class="en">Resp</span>: <code>operation{}</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/status</code></td>
+            <td><span class="zh">取操作状态（同 get）</span><span class="en">Operation status (alias of get)</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>operation_id</code> (query)</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/list</code></td>
+            <td><span class="zh">列出操作</span><span class="en">List operations</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>status</code>, <code>limit</code>(def 20) · <span class="zh">响应</span><span class="en">Resp</span>: <code>operations[]</code>, <code>count</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/check_timeouts</code></td>
+            <td><span class="zh">巡检超时操作</span><span class="en">Sweep timed-out operations</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>timeout_operations[]</code>, <code>count</code></td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <span class="zh"><code>operation/status</code> 与 <code>operation/get</code> 共用同一 handler，是同一查询的两个别名路径。</span>
+        <span class="en"><code>operation/status</code> and <code>operation/get</code> share the same handler — two alias paths for one query.</span>
+      </div>
+    </section>
+
+    <section id="instance">
+      <h2><span class="zh">实例管理（内部）API</span><span class="en">Instance Management (internal) API</span></h2>
+      <p class="section-sub"><span class="zh">实例记录 CRUD、计数、端口分配与副本数同步。</span><span class="en">Instance-record CRUD, counting, port allocation and replica sync.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/create</code></td>
+            <td><span class="zh">创建实例记录</span><span class="en">Create instance record</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>instance_id</code>, <code>container_name</code>, <code>compose_service_name</code>, <code>host</code>, <code>port</code>, <code>internal_port</code>, <code>status</code>, <code>expected_status</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>instance_id</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/update</code></td>
+            <td><span class="zh">更新实例状态/心跳</span><span class="en">Update instance state/heartbeat</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>instance_id</code>, <code>status</code>, <code>health_status</code>, <code>last_heartbeat</code>, <code>consecutive_failures</code> …</td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/delete</code></td>
+            <td><span class="zh">删除实例记录</span><span class="en">Delete instance record</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>instance_id</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/get</code></td>
+            <td><span class="zh">取实例详情</span><span class="en">Get instance detail</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>instance_id</code> · <span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">完整实例字段</span><span class="en">full instance fields</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/list</code></td>
+            <td><span class="zh">列出实例</span><span class="en">List instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>status</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>instances[]</code>, <code>count</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/count</code></td>
+            <td><span class="zh">统计实例数</span><span class="en">Count instances</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>status</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>count</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/get_next_port</code></td>
+            <td><span class="zh">分配下一可用端口</span><span class="en">Allocate next free port</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>start_port</code>, <code>end_port</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>port</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/service_info/update_replicas</code></td>
+            <td><span class="zh">同步副本数</span><span class="en">Sync replica counts</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>desired_replicas</code>, <code>actual_replicas</code>, <code>last_scale_at</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="logs">
+      <h2><span class="zh">服务日志 API</span><span class="en">Service Logs API</span></h2>
+      <p class="section-sub"><span class="zh">查询服务动作日志（service_action_log）。</span><span class="en">Query the service action log (service_action_log).</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_logs</code></td>
+            <td><span class="zh">查动作日志</span><span class="en">Query action logs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code>, <code>action_type</code>, <code>action_status</code>, <code>limit</code>(def 100) · <span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">日志条目列表</span><span class="en">log entries</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="hooks" style="border-bottom:none">
+      <h2><span class="zh">钩子监控 API</span><span class="en">Hook Monitoring API</span></h2>
+      <p class="section-sub"><span class="zh">注册/预注册钩子的指标、历史、状态与性能。</span><span class="en">Metrics, history, status and performance of registration/pre-registration hooks.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/metrics</code></td>
+            <td><span class="zh">钩子指标</span><span class="en">Hook metrics</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <span class="zh">按名称的指标值/标签/时间</span><span class="en">values/labels/timestamps by name</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/history</code></td>
+            <td><span class="zh">钩子执行历史</span><span class="en">Hook execution history</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>hook_name</code>, <code>limit</code>(def 100) · <span class="zh">响应</span><span class="en">Resp</span>: <code>total</code>, <code>history[]</code>（<code>result</code>, <code>execution_time</code>…）</td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/status</code></td>
+            <td><span class="zh">钩子总览</span><span class="en">Hook overview</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>total_hooks</code>, <code>hook_types</code>, <code>metrics_summary</code></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/hooks/metrics/reset</code></td>
+            <td><span class="zh">重置指标</span><span class="en">Reset metrics</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>reset_metrics_count</code>, <code>history_cleared</code></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/performance</code></td>
+            <td><span class="zh">钩子性能统计</span><span class="en">Hook performance stats</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>hook_name</code>, <code>time_range</code>(def 24h) · <span class="zh">响应</span><span class="en">Resp</span>: <code>overall_stats</code>(success_rate…), <code>performance_by_hook</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="service-controllersrv.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl">controllersrv</span></a>
+      <a class="next" href="service-opsbffsrv.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl">opsbffsrv</span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

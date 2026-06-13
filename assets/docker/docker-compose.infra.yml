@@ -1,0 +1,401 @@
+# 通用 Python 服务镜像设置
+x-python-service-image: &python_service_image cancan_python_service:latest
+x-python-service-build: &python_service_build
+  context: ./builds/service
+  dockerfile: Dockerfile
+  args:
+    # Injected automatically by the cancan CLI (os.environ CANCAN_VERSION = package version).
+    CANCAN_VERSION: "${CANCAN_VERSION:?CANCAN_VERSION required — run via the cancan CLI (cancan stack up / cancan compose build)}"
+    CANCAN_PIP_SPEC: "${CANCAN_PIP_SPEC:-}"
+    PIP_INDEX_URL: "${PIP_INDEX_URL:-}"
+
+# ============================================
+# 基础设施 Docker Compose 配置
+# 包含: Caddy, PostgreSQL, Redis, infrasrv, opsbffsrv
+# 这些服务属于基础框架，一般不需要频繁调整
+# ============================================
+
+# 自定义网络 - 所有服务使用相同网络
+# 通过 CANCAN_STACK_PREFIX 环境变量隔离不同的 Podman/Docker 栈
+networks:
+  app_network:
+    driver: bridge
+    # 不指定 name，让 compose 使用项目级别的网络名，避免与已有网络冲突。
+    # Do not set a fixed network name; let Compose create a project-scoped network to avoid collisions.
+
+# 命名数据卷 - 用于持久化存储
+volumes:
+  postgres_data:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_postgres_data
+  redis_data:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_redis_data
+  caddy_data:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_caddy_data
+  caddy_config:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_caddy_config
+  rabbitmq_data:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_rabbitmq_data
+  mongo_data:
+    name: ${CANCAN_STACK_PREFIX:-cancan}_mongo_data
+
+services:
+  # ==========================================
+  # Caddy - 反向代理和 WAF (带 Coraza WAF)
+  # ==========================================
+  caddy.internal:
+    build:
+      context: ./builds/caddy
+      dockerfile: Dockerfile
+      args:
+        GOPROXY: ${CADDY_GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct}
+        GOSUMDB: ${CADDY_GOSUMDB:-sum.golang.google.cn}
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_caddy
+    hostname: caddy.internal
+    ports:
+#      - "80:80"       # HTTP
+#      - "443:443"     # HTTPS
+      - "8080:8080"   # 本地开发访问（生产环境会被防火墙过滤）
+    volumes:
+      - ./builds/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./builds/caddy/logs:/var/log/caddy
+      - ./builds/caddy/geoip:/usr/share/GeoIP  # GeoLite2 数据库
+      - ./builds/caddy/waf:/etc/caddy/waf      # Coraza WAF 配置和规则
+      - ./builds/caddy/www:/srv/www:ro         # 静态站点（adminops 等）/ Static sites (adminops, etc.)
+    networks:
+      app_network:
+        aliases:
+          - caddy.internal  # Podman DNS 别名
+    environment:
+      - TZ=Asia/Shanghai
+    # 注意：Podman 5.6.2 健康检查存在兼容性问题，但 Docker 正常
+    # Caddy 服务已验证正常运行，Admin API 可访问 http://localhost:2019/config/
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    # 优雅关闭配置
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # PostgreSQL - 主数据库
+  # ==========================================
+  postgres.internal:
+    image: postgres:18
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_postgres
+    hostname: postgres.internal
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_DB: main
+      TZ: Asia/Shanghai
+      # PG 18+ 建议挂载到 /var/lib/postgresql，数据会自动放在子目录
+      PGDATA: /var/lib/postgresql/data
+    # 端口映射：支持宿主机访问（out-pod 模式）
+    ports:
+      - "25432:5432"  # 宿主机可通过 localhost:5432 访问
+    volumes:
+      - postgres_data:/var/lib/postgresql  # 修改挂载点以兼容 PG 18+
+      - ./ddl:/docker-entrypoint-initdb.d
+    networks:
+      app_network:
+        aliases:
+          - postgres.internal  # Podman DNS 别名
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # 优雅关闭配置
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+
+  # ==========================================
+  # Redis - 缓存和消息队列
+  # ==========================================
+  redis.internal:
+    image: redis:8.4-alpine
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_redis
+    hostname: redis.internal
+    # 端口映射：支持宿主机访问（out-pod 模式）
+    ports:
+      - "26379:6379"  # 宿主机可通过 localhost:6379 访问
+    volumes:
+      - redis_data:/data  # 使用命名卷
+    networks:
+      app_network:
+        aliases:
+          - redis.internal  # Podman DNS 别名
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    # 优雅关闭配置
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # RabbitMQ - 消息队列 + Management Plugin
+  # ==========================================
+  rabbitmq.internal:
+    image: rabbitmq:4-management
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_rabbitmq
+    hostname: rabbitmq.internal
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USERNAME:-admin}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-admin123}
+      - TZ=Asia/Shanghai
+    ports:
+      - "35672:5672"
+      - "35673:15672"
+    expose:
+      - "5672"
+      - "15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      app_network:
+        aliases:
+          - rabbitmq.internal
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # MongoDB - 日志存储
+  # ==========================================
+  mongo.internal:
+    image: mongo:7.0
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_mongo
+    hostname: mongo.internal
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-admin123}
+      - TZ=Asia/Shanghai
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      app_network:
+        aliases:
+          - mongo.internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --username admin --password ${MONGO_INITDB_ROOT_PASSWORD:-admin123} --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 })'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # mongo-express - MongoDB Web UI
+  # ==========================================
+  mongo-express.internal:
+    image: mongo-express:1.0.2-20-alpine3.19
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_mongo_express
+    hostname: mongo-express.internal
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo.internal
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-admin123}
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=${MONGO_EXPRESS_PASSWORD:-admin123}
+      - ME_CONFIG_SITE_BASEURL=/v1/opsbffsrv/mongo_express/
+      - TZ=Asia/Shanghai
+    expose:
+      - "8081"
+    networks:
+      app_network:
+        aliases:
+          - mongo-express.internal
+    depends_on:
+      mongo.internal:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # infrasrv - 基础设施服务
+  # ==========================================
+  infrasrv.service:
+    image: *python_service_image
+    build: *python_service_build
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_infrasrv
+    hostname: infrasrv.service
+    command: ["sh", "-c", "python -m cancan_microstack.cmd.infrasrv.run 2>&1 | tee -a /app/server_log_data/infrasrv.out.log"]
+    environment:
+      - NE_CONFIG=dev_in_pod
+      - PYTHONUNBUFFERED=1
+      # Mac/Docker Desktop: use host.docker.internal to access host services
+      - "CONTROLLERSRV_HOST=${CONTROLLERSRV_HOST:-http://host.containers.internal:22100}"
+      # 凭据从工作区 .env 注入；默认值与开箱即用一致 / Credentials from workspace .env; defaults match out-of-box
+      - "RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-admin}"
+      - "RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-admin123}"
+      - "MONGODB_URI=${MONGODB_URI:-mongodb://admin:admin123@mongo.internal:27017/admin?authSource=admin}"
+    # 不直接暴露端口，通过 Caddy 反向代理访问
+    expose:
+      - "8080"
+    networks:
+      app_network:
+        aliases:
+          - infrasrv.service  # Podman DNS 别名
+    depends_on:
+      postgres.internal:
+        condition: service_healthy
+      redis.internal:
+        condition: service_healthy
+      rabbitmq.internal:
+        condition: service_healthy
+      mongo.internal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/internal/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    volumes:
+      - ./ddl:/app/ddl
+      - ./server_log_data:/app/server_log_data
+    # 优雅关闭配置
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # opsbffsrv - 运营管理服务
+  # ==========================================
+  opsbffsrv.service:
+    image: *python_service_image
+    build: *python_service_build
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_opsbffsrv
+    hostname: opsbffsrv.service
+    command: ["sh", "-c", "python -m cancan_microstack.cmd.opsbffsrv.run 2>&1 | tee -a /app/server_log_data/opsbffsrv.out.log"]
+    environment:
+      - NE_CONFIG=dev_in_pod
+      - PYTHONUNBUFFERED=1
+      # 凭据/密钥从工作区 .env 注入；默认值与开箱即用一致 / From workspace .env; defaults match out-of-box
+      - "CONTROLLERSRV_HOST=${CONTROLLERSRV_HOST:-http://host.containers.internal:22100}"
+      - "MONGODB_URI=${MONGODB_URI:-mongodb://admin:admin123@mongo.internal:27017/admin?authSource=admin}"
+      - "AUTH_TOTP_FERNET_KEY=${AUTH_TOTP_FERNET_KEY:-}"
+      - "AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-true}"
+      - "MONGO_EXPRESS_PASSWORD=${MONGO_EXPRESS_PASSWORD:-admin123}"
+      - "RABBITMQ_MGMT_PASSWORD=${RABBITMQ_MGMT_PASSWORD:-admin123}"
+      - "PROXY_CORS_ALLOWED_ORIGINS=${PROXY_CORS_ALLOWED_ORIGINS:-}"
+    # 不直接暴露端口，通过 Caddy 反向代理访问
+    expose:
+      - "8080"
+    networks:
+      app_network:
+        aliases:
+          - opsbffsrv.service  # Podman DNS 别名
+    depends_on:
+      postgres.internal:
+        condition: service_healthy
+      redis.internal:
+        condition: service_healthy
+      infrasrv.service:
+        condition: service_healthy
+      mongo.internal:
+        condition: service_healthy
+      rabbitmq.internal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/internal/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    volumes:
+      - ./ddl:/app/ddl
+      - ./server_log_data:/app/server_log_data
+      - ./builds/caddy/geoip:/usr/share/GeoIP  # GeoIP 数据库（与 Caddy 共享）
+      - ./builds/caddy/logs:/app/builds/caddy/logs:ro  # Caddy access logs（供统计采集）
+    # 优雅关闭配置
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+
+  # ==========================================
+  # pgweb - PostgreSQL Web UI
+  # ==========================================
+  pgweb.internal:
+    image: sosedoff/pgweb:latest
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_pgweb
+    hostname: pgweb.internal
+    environment:
+      - PGWEB_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres.internal:5432/main?sslmode=disable
+      - TZ=Asia/Shanghai
+    # 不直接暴露端口，通过 opsbffsrv 转发访问
+    expose:
+      - "8081"
+    networks:
+      app_network:
+        aliases:
+          - pgweb.internal  # Podman DNS 别名
+    depends_on:
+      postgres.internal:
+        condition: service_healthy
+    # 注意：Podman 5.6.2 健康检查存在兼容性问题，但 Docker 正常
+    # pgweb 服务已验证正常运行，可通过 opsbffsrv 访问 http://localhost:8081/
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8081"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ==========================================
+  # redis-commander - Redis Web UI
+  # ==========================================
+  redis-commander.internal:
+    image: rediscommander/redis-commander:latest
+    container_name: ${CANCAN_STACK_PREFIX:-cancan}_redis_commander
+    hostname: redis-commander.internal
+    environment:
+      - REDIS_HOSTS=local:redis.internal:6379
+      - TZ=Asia/Shanghai
+    # 不直接暴露端口，通过 opsbffsrv 转发访问
+    expose:
+      - "8081"
+    networks:
+      app_network:
+        aliases:
+          - redis-commander.internal
+    depends_on:
+      redis.internal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

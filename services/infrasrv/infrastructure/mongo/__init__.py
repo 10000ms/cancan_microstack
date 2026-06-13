@@ -1,0 +1,1 @@
+"""infrasrv Mongo infrastructure package."""

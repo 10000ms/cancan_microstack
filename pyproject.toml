@@ -1,0 +1,161 @@
+[build-system]
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cancan-microstack"
+dynamic = ["version"]
+description = "Controllersrv/Infrasrv/Opsbffsrv bundle with compose tooling"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Victor Lai", email = "victor.lai@foxmail.com"},
+]
+keywords = ["fastapi", "microservices", "docker", "compose", "orchestration", "workflow", "ops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System :: Systems Administration",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pyyaml>=6.0.0,<7.0.0",
+    "bcrypt>=4.0.0,<6.0.0",
+    "pyotp>=2.9.0,<3.0.0",
+    "Pillow>=10.0.0,<13.0.0",
+    "nanoid>=2.0.0,<4.0.0",
+    "redis[hiredis]>=5.0.0,<9.0.0",
+    "cryptography>=41.0.0,<50.0.0",
+    "qrcode>=7.4.0,<9.0.0",
+    "jinja2>=3.1.0,<4.0.0",      # 工作流节点模板 / workflow node templating
+    "geoip2>=4.7.0,<6.0.0",      # Caddy 访问日志地理信息 / GeoIP enrichment
+    "jmespath>=1.0.0,<2.0.0",    # JSON 查询 / JSON querying
+    # 已发布到 PyPI 的姊妹库 / sibling libraries published to PyPI
+    "dragonfly-container[all]>=0.0.1",
+    "linglong-web[all]>=0.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+cancan = "cancan_microstack.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/10000ms/cancan_microstack"
+Repository = "https://github.com/10000ms/cancan_microstack"
+"Bug Tracker" = "https://github.com/10000ms/cancan_microstack/issues"
+
+[tool.setuptools]
+zip-safe = false
+package-dir = {"cancan_microstack" = "."}
+packages = [
+    "cancan_microstack",
+    "cancan_microstack.assets",
+    "cancan_microstack.cli",
+    "cancan_microstack.cmd",
+    "cancan_microstack.cmd.cancan",
+    "cancan_microstack.cmd.controllersrv",
+    "cancan_microstack.cmd.infrasrv",
+    "cancan_microstack.cmd.opsbffsrv",
+    "cancan_microstack.core",
+    "cancan_microstack.public",
+    "cancan_microstack.public.api",
+    "cancan_microstack.public.const",
+    "cancan_microstack.public.logging",
+    "cancan_microstack.public.schemas",
+    "cancan_microstack.public.schemas.caddy",
+    "cancan_microstack.public.schemas.controllersrv",
+    "cancan_microstack.public.schemas.infra",
+    "cancan_microstack.public.schemas.logging",
+    "cancan_microstack.public.schemas.opsbffsrv",
+    "cancan_microstack.public.types",
+    "cancan_microstack.public.web",
+    "cancan_microstack.runtime",
+    "cancan_microstack.services",
+    "cancan_microstack.services.controllersrv",
+    "cancan_microstack.services.controllersrv.application",
+    "cancan_microstack.services.controllersrv.conf",
+    "cancan_microstack.services.controllersrv.domain",
+    "cancan_microstack.services.controllersrv.domain.docker_compose",
+    "cancan_microstack.services.controllersrv.domain.task",
+    "cancan_microstack.services.controllersrv.infrastructure",
+    "cancan_microstack.services.controllersrv.interface",
+    "cancan_microstack.services.controllersrv.interface.api",
+    "cancan_microstack.services.infrasrv",
+    "cancan_microstack.services.infrasrv.application",
+    "cancan_microstack.services.infrasrv.application.logging",
+    "cancan_microstack.services.infrasrv.application.workflow",
+    "cancan_microstack.services.infrasrv.conf",
+    "cancan_microstack.services.infrasrv.domain",
+    "cancan_microstack.services.infrasrv.domain.health_check",
+    "cancan_microstack.services.infrasrv.domain.hooks",
+    "cancan_microstack.services.infrasrv.domain.registry",
+    "cancan_microstack.services.infrasrv.domain.service_config",
+    "cancan_microstack.services.infrasrv.domain.service_logs",
+    "cancan_microstack.services.infrasrv.domain.workflow",
+    "cancan_microstack.services.infrasrv.infrastructure",
+    "cancan_microstack.services.infrasrv.infrastructure.api",
+    "cancan_microstack.services.infrasrv.infrastructure.cache",
+    "cancan_microstack.services.infrasrv.infrastructure.db",
+    "cancan_microstack.services.infrasrv.infrastructure.db.model",
+    "cancan_microstack.services.infrasrv.infrastructure.db.operate",
+    "cancan_microstack.services.infrasrv.infrastructure.mongo",
+    "cancan_microstack.services.infrasrv.interface",
+    "cancan_microstack.services.infrasrv.interface.api",
+    "cancan_microstack.services.infrasrv.interface.schedule",
+    "cancan_microstack.services.opsbffsrv",
+    "cancan_microstack.services.opsbffsrv.application",
+    "cancan_microstack.services.opsbffsrv.application.caddy",
+    "cancan_microstack.services.opsbffsrv.application.logging",
+    "cancan_microstack.services.opsbffsrv.conf",
+    "cancan_microstack.services.opsbffsrv.domain",
+    "cancan_microstack.services.opsbffsrv.domain.auth",
+    "cancan_microstack.services.opsbffsrv.domain.caddy",
+    "cancan_microstack.services.opsbffsrv.domain.db_admin",
+    "cancan_microstack.services.opsbffsrv.domain.db_init",
+    "cancan_microstack.services.opsbffsrv.domain.logging",
+    "cancan_microstack.services.opsbffsrv.domain.service_config",
+    "cancan_microstack.services.opsbffsrv.domain.service_registry",
+    "cancan_microstack.services.opsbffsrv.infrastructure",
+    "cancan_microstack.services.opsbffsrv.infrastructure.api",
+    "cancan_microstack.services.opsbffsrv.infrastructure.auth",
+    "cancan_microstack.services.opsbffsrv.infrastructure.caddy",
+    "cancan_microstack.services.opsbffsrv.infrastructure.db",
+    "cancan_microstack.services.opsbffsrv.infrastructure.db.model",
+    "cancan_microstack.services.opsbffsrv.infrastructure.db.operate",
+    "cancan_microstack.services.opsbffsrv.infrastructure.mongo",
+    "cancan_microstack.services.opsbffsrv.interface",
+    "cancan_microstack.services.opsbffsrv.interface.api",
+    "cancan_microstack.services.opsbffsrv.interface.api.caddy",
+    "cancan_microstack.services.opsbffsrv.interface.middleware",
+    "cancan_microstack.utils",
+]
+
+[tool.setuptools.package-data]
+"cancan_microstack" = ["py.typed", "assets/**/*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cancan_microstack.__version__.__version__"}
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Python API — Cancan Microstack</title>
+<meta name="description" content="Use Cancan Microstack from code: the CancanMicrostack facade (build_compose / export_asset / run_service), AssetManager, and the public layer (schemas / const / error / web / logging).">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="python-api">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title">Python API</h1>
+    <p class="page-lead">
+      <span class="zh">除了 <code>cancan</code> 命令行，整套能力也能在代码里直接用：导入 <code>CancanMicrostack</code> 门面，或单独用 <code>AssetManager</code>，再配合 <code>public/</code> 公共层的模型与常量。</span>
+      <span class="en">Beyond the <code>cancan</code> CLI, every capability is usable from code: import the <code>CancanMicrostack</code> facade, use <code>AssetManager</code> on its own, and build on the models and constants in the <code>public/</code> layer.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#facade"><span class="zh">门面方法</span><span class="en">Facade methods</span></a>
+      <a href="#example"><span class="zh">完整使用例</span><span class="en">Full example</span></a>
+      <a href="#assets"><span class="zh">AssetManager</span><span class="en">AssetManager</span></a>
+      <a href="#public"><span class="zh">public 公共层</span><span class="en">Public layer</span></a>
+      <a href="#import-style"><span class="zh">导入风格</span><span class="en">Import style</span></a>
+    </div>
+
+    <section id="facade">
+      <h2><span class="zh">CancanMicrostack 门面方法</span><span class="en">CancanMicrostack facade methods</span></h2>
+      <p class="section-sub"><span class="zh">三个高层方法覆盖最常见的三件事：合成 compose、导出资产、启动服务。</span><span class="en">Three high-level methods cover the three most common jobs: synthesize compose, export an asset, run a service.</span></p>
+      <p>
+        <span class="zh">从顶层包导入门面即可。构造时它会一次性组装好 <code>AssetManager</code> / <code>ComposeBuilder</code> / <code>ServiceRunner</code>，你只需认识一个对象。</span>
+        <span class="en">Import the facade from the top-level package. Constructing it wires up <code>AssetManager</code> / <code>ComposeBuilder</code> / <code>ServiceRunner</code> at once, so you only deal with a single object.</span>
+      </p>
+      <pre><code><span class="tok-k">from</span> cancan_microstack <span class="tok-k">import</span> CancanMicrostack
+
+stack = CancanMicrostack()</code></pre>
+
+      <h3><code>build_compose(*, workspace, service_file=None, overrides=None, output=None) -> Path</code></h3>
+      <p>
+        <span class="zh">以内置 infra compose 为 base，依次深度合并业务 compose 与多份 overrides，写出最终栈文件并返回其路径。<code>output</code> 为空时默认落到 <code>workspace/compose.cancan.yml</code>。注意全部是<strong>关键字参数</strong>。</span>
+        <span class="en">Starting from the built-in infra compose, it deep-merges the business compose and any overrides in order, writes the final stack file and returns its path. When <code>output</code> is omitted it defaults to <code>workspace/compose.cancan.yml</code>. Note that all arguments are <strong>keyword-only</strong>.</span>
+      </p>
+      <pre><code><span class="tok-k">from</span> pathlib <span class="tok-k">import</span> Path
+
+out = stack.build_compose(
+    workspace=Path(<span class="tok-s">"."</span>),
+    service_file=Path(<span class="tok-s">"docker-compose.services.yml"</span>),
+    overrides=[Path(<span class="tok-s">"compose.dev.yml"</span>)],
+)
+<span class="tok-f">print</span>(out)  <span class="tok-c"># .../compose.cancan.yml</span></code></pre>
+
+      <h3><code>export_asset(logical_name, destination, overwrite=False) -> Path</code></h3>
+      <p>
+        <span class="zh">把一个包内资产复制到工作区路径并返回目的地。目录用 <code>copytree</code>、文件用 <code>copy2</code>；目的地已存在且 <code>overwrite=False</code> 时抛 <code>FileExistsError</code>。这是让 Docker 能挂载到资产的标准做法。</span>
+        <span class="en">Copies a packaged asset to a workspace path and returns the destination. Directories use <code>copytree</code>, files use <code>copy2</code>; if the destination exists and <code>overwrite=False</code> it raises <code>FileExistsError</code>. This is the canonical way to make assets mountable by Docker.</span>
+      </p>
+      <pre><code>stack.export_asset(
+    <span class="tok-s">"docker/docker-compose.infra.yml"</span>,
+    Path(<span class="tok-s">"infra/docker-compose.infra.yml"</span>),
+    overwrite=<span class="tok-k">True</span>,
+)</code></pre>
+
+      <h3><code>run_service(service_name, host="0.0.0.0", port=8080, workspace=None) -> None</code></h3>
+      <p>
+        <span class="zh">按服务名（<code>controllersrv</code> / <code>infrasrv</code> / <code>opsbffsrv</code>）启动内置服务：内部会先 bootstrap 工作区与覆盖目录，再动态 import 入口点并调用其 <code>main(host, port)</code>。这是<strong>阻塞</strong>调用（内部 <code>asyncio.run</code>）；要在已有事件循环里跑，用 <code>await stack.run_service_async(...)</code>。</span>
+        <span class="en">Starts a bundled service by name (<code>controllersrv</code> / <code>infrasrv</code> / <code>opsbffsrv</code>): it bootstraps the workspace and override dir, then dynamically imports the entrypoint and calls its <code>main(host, port)</code>. This call <strong>blocks</strong> (it wraps <code>asyncio.run</code>); inside an existing event loop use <code>await stack.run_service_async(...)</code>.</span>
+      </p>
+      <pre><code>stack.run_service(<span class="tok-s">"controllersrv"</span>, port=<span class="tok-n">22100</span>)  <span class="tok-c"># blocks until the service stops</span></code></pre>
+      <div class="note tip">
+        <span class="zh"><strong>端口约定：</strong>方法签名默认 <code>8080</code>，但 CLI 对 <code>controllersrv</code> 默认用 <code>22100</code>。代码里启动 <code>controllersrv</code> 时建议显式传 <code>port=22100</code>，与整栈保持一致。</span>
+        <span class="en"><strong>Port convention:</strong> the signature defaults to <code>8080</code>, but the CLI defaults <code>controllersrv</code> to <code>22100</code>. When starting <code>controllersrv</code> from code, pass <code>port=22100</code> explicitly to stay consistent with the full stack.</span>
+      </div>
+    </section>
+
+    <section id="example">
+      <h2><span class="zh">完整使用例</span><span class="en">Full example</span></h2>
+      <p class="section-sub"><span class="zh">合成栈 → 导出资产 → 启动服务，一气呵成。</span><span class="en">Synthesize the stack, export an asset, then run a service — end to end.</span></p>
+      <pre><code><span class="tok-k">from</span> pathlib <span class="tok-k">import</span> Path
+<span class="tok-k">from</span> cancan_microstack <span class="tok-k">import</span> CancanMicrostack
+
+stack = CancanMicrostack()
+workspace = Path(<span class="tok-s">"."</span>).resolve()
+
+<span class="tok-c"># 1) 合成最终 compose 栈 / synthesize the final compose stack</span>
+compose_file = stack.build_compose(
+    workspace=workspace,
+    service_file=workspace / <span class="tok-s">"docker-compose.services.yml"</span>,
+    overrides=[workspace / <span class="tok-s">"compose.dev.yml"</span>],
+)
+
+<span class="tok-c"># 2) 导出包内资产，供 Docker 挂载 / export a packaged asset for Docker to mount</span>
+stack.export_asset(
+    <span class="tok-s">"ddl/create_db.sql"</span>,
+    workspace / <span class="tok-s">"ddl"</span> / <span class="tok-s">"create_db.sql"</span>,
+    overwrite=<span class="tok-k">False</span>,
+)
+
+<span class="tok-c"># 3) 在宿主机启动 controllersrv（阻塞）/ run controllersrv on the host (blocking)</span>
+stack.run_service(<span class="tok-s">"controllersrv"</span>, port=<span class="tok-n">22100</span>, workspace=workspace)</code></pre>
+    </section>
+
+    <section id="assets">
+      <h2><span class="zh">AssetManager 直接用法</span><span class="en">Using AssetManager directly</span></h2>
+      <p class="section-sub"><span class="zh">只想读/导出资产，不必经过门面，可以单独实例化 <code>AssetManager</code>。</span><span class="en">If you only need to read or export assets, instantiate <code>AssetManager</code> on its own.</span></p>
+      <pre><code><span class="tok-k">from</span> pathlib <span class="tok-k">import</span> Path
+<span class="tok-k">from</span> cancan_microstack <span class="tok-k">import</span> AssetManager
+
+assets = AssetManager()
+
+<span class="tok-c"># 列出某子目录下的资产 / list assets under a subdir</span>
+<span class="tok-k">for</span> rec <span class="tok-k">in</span> assets.list_assets(<span class="tok-s">"docker"</span>):
+    <span class="tok-f">print</span>(rec.logical_name, rec.is_dir)
+
+<span class="tok-c"># 导出单个资产 / export one asset</span>
+assets.export_asset(<span class="tok-s">"docker/docker-compose.infra.yml"</span>,
+                    Path(<span class="tok-s">"infra/docker-compose.infra.yml"</span>))
+
+<span class="tok-c"># 直接读文本 / read text directly</span>
+yaml_text = assets.read_text(<span class="tok-s">"docker/docker-compose.infra.yml"</span>)
+
+<span class="tok-c"># 物化成可访问的 Path / materialize a usable Path</span>
+path = assets.resolve_path(<span class="tok-s">"ddl/create_db.sql"</span>)</code></pre>
+      <ul>
+        <li><code>list_assets(subdir=None)</code> — <span class="zh">递归返回 <code>AssetRecord(logical_name, path, is_dir)</code> 列表；不传 <code>subdir</code> 则列全部。</span><span class="en">recursively returns a list of <code>AssetRecord(logical_name, path, is_dir)</code>; lists everything when <code>subdir</code> is omitted.</span></li>
+        <li><code>export_asset(logical_name, destination, overwrite=False)</code> — <span class="zh">同门面方法，复制资产到工作区。</span><span class="en">same as the facade method, copies the asset into the workspace.</span></li>
+        <li><code>read_text(logical_name)</code> — <span class="zh">以 UTF-8 读出文本内容。</span><span class="en">reads text content as UTF-8.</span></li>
+        <li><code>resolve_path(logical_name)</code> — <span class="zh">物化资产并返回 <code>Path</code>，资产不存在时抛 <code>FileNotFoundError</code>。</span><span class="en">materializes the asset and returns a <code>Path</code>, raising <code>FileNotFoundError</code> if it does not exist.</span></li>
+      </ul>
+    </section>
+
+    <section id="public">
+      <h2><span class="zh">public 公共层导出速览</span><span class="en">Public layer at a glance</span></h2>
+      <p class="section-sub"><span class="zh"><code>public/</code> 封装了 schema / const / error / web / logging 等共享能力，供三个内置服务与业务服务复用。下表列常用导出，<strong>以各真实定义模块为准</strong>。</span><span class="en"><code>public/</code> bundles shared schemas / const / error / web / logging for the bundled and business services. The table lists the common exports — <strong>the real definition module is the source of truth</strong>.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">子模块</span><span class="en">Sub-package</span></th>
+          <th><span class="zh">主要导出</span><span class="en">Key exports</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>public/schemas</code></td>
+            <td>
+              <code>APIResponse[T]</code> · <code>APIError</code> · <code>MessageResp</code> <span class="muted">(common.py)</span><br>
+              <code>LogEventCreate</code> · <code>LogEventDocument</code> · <code>LogQueryRequest</code> <span class="muted">(logging/log_event.py)</span><br>
+              <code>ServiceRegistryPayload</code> · <code>ServiceMetadata</code> · <code>InstanceMetadata</code> <span class="muted">(service_registry.py)</span><br>
+              <code>HookContext</code> · <code>HookExecutionResult</code> <span class="muted">(hooks.py)</span>
+            </td>
+            <td><span class="zh">Pydantic 模型：统一响应、工作流/服务运行模型、服务注册模型、日志事件模型、钩子上下文。</span><span class="en">Pydantic models: unified responses, workflow/service-operation models, service-registry payloads, log-event models, hook context.</span></td>
+          </tr>
+          <tr>
+            <td><code>public/const</code></td>
+            <td>
+              <code>WorkflowTask</code> · <code>WorkflowStatusEnum</code> · <code>NodeStatusEnum</code> <span class="muted">(workflow_consts.py)</span><br>
+              <code>OperationType</code> · <code>OperationStatus</code> <span class="muted">(operation_consts.py)</span><br>
+              <code>RedisKey</code> <span class="muted">(redis.py)</span> · <code>ErrorCode</code> · <code>ErrorMsg</code> <span class="muted">(error.py)</span>
+            </td>
+            <td><span class="zh">StrEnum 常量：Celery 任务名、工作流/节点状态、操作类型与状态、Redis key 模板、错误码。</span><span class="en">StrEnum constants: Celery task names, workflow/node status, operation type &amp; status, Redis key templates, error codes.</span></td>
+          </tr>
+          <tr>
+            <td><code>public/error</code></td>
+            <td><code>HTTPException</code> · <code>ParamError</code></td>
+            <td><span class="zh">库自带的统一异常（继承 linglong-web 的 <code>LinglongHTTPException</code>），默认带 <code>ErrorCode</code>，不依赖业务仓异常。</span><span class="en">Library-owned exceptions (extending linglong-web's <code>LinglongHTTPException</code>) carrying an <code>ErrorCode</code>, with no dependency on consumer-repo errors.</span></td>
+          </tr>
+          <tr>
+            <td><code>public/web</code></td>
+            <td><code>AppServer</code> · <code>ConfigValueResolver</code><br><span class="muted"><span class="zh">基础件来自 linglong-web：</span><span class="en">base building blocks from linglong-web:</span> <code>BaseRoute</code> · <code>build_success_response</code> …</span></td>
+            <td><span class="zh">基于 linglong-web 扩展的 <code>AppServer</code>（服务注册 / 远程配置 / <code>/internal/health</code>），以及配置值解析器。路由基类与响应构造器直接来自 <code>linglong_web</code>。</span><span class="en">An <code>AppServer</code> extending linglong-web (service registry / remote config / <code>/internal/health</code>) plus a config-value resolver. Route base classes and response builders come straight from <code>linglong_web</code>.</span></td>
+          </tr>
+          <tr>
+            <td><code>public/logging</code></td>
+            <td><code>RabbitMQHandler</code> · <code>build_log_routing_key</code></td>
+            <td><span class="zh">线程安全的 logging Handler，把日志异步发布到 RabbitMQ topic 交换机（桥接同步 logging 与 <code>aio_pika</code>），消息体即 <code>LogEventCreate</code>。</span><span class="en">A thread-safe logging handler that publishes records to a RabbitMQ topic exchange asynchronously (bridging sync logging and <code>aio_pika</code>); the message body is a <code>LogEventCreate</code>.</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <pre><code><span class="tok-c"># 从真实定义模块直接 import / import straight from the defining module</span>
+<span class="tok-k">from</span> cancan_microstack.public.schemas.common <span class="tok-k">import</span> APIResponse
+<span class="tok-k">from</span> cancan_microstack.public.const.error <span class="tok-k">import</span> ErrorCode
+<span class="tok-k">from</span> cancan_microstack.public.error <span class="tok-k">import</span> HTTPException
+<span class="tok-k">from</span> cancan_microstack.public.logging.mq_handler <span class="tok-k">import</span> RabbitMQHandler
+
+resp = APIResponse.success_resp(data={<span class="tok-s">"ok"</span>: <span class="tok-k">True</span>})
+err = APIResponse.error_resp(code=ErrorCode.INVALID_PARAM, msg=<span class="tok-s">"bad request"</span>)</code></pre>
+    </section>
+
+    <section id="import-style" style="border-bottom:none">
+      <h2><span class="zh">导入风格</span><span class="en">Import style</span></h2>
+      <p class="section-sub"><span class="zh">这一条会影响你怎么写 import，值得单独记住。</span><span class="en">This one rule shapes how you write imports — worth remembering on its own.</span></p>
+      <div class="note">
+        <span class="zh"><strong>从真实定义模块直接 import，不依赖 <code>__init__</code> re-export。</strong>本库的 <code>public/*/__init__.py</code> 多数是空的命名空间，并不集中转发符号。请按上例那样从 <code>cancan_microstack.public.schemas.common</code> 这类<strong>具体模块</strong>导入，而不是指望 <code>from cancan_microstack.public import APIResponse</code>。唯一例外是顶层包：<code>CancanMicrostack</code> / <code>AssetManager</code> / <code>ComposeBuilder</code> / <code>ServiceRunner</code> 确实在 <code>cancan_microstack/__init__.py</code> 做了导出，可直接 <code>from cancan_microstack import ...</code>。</span>
+        <span class="en"><strong>Import straight from the defining module; do not rely on <code>__init__</code> re-exports.</strong> Most <code>public/*/__init__.py</code> files here are empty namespaces and do not forward symbols. Import from the <strong>concrete module</strong> like <code>cancan_microstack.public.schemas.common</code> as shown, rather than expecting <code>from cancan_microstack.public import APIResponse</code>. The one exception is the top-level package: <code>CancanMicrostack</code> / <code>AssetManager</code> / <code>ComposeBuilder</code> / <code>ServiceRunner</code> are re-exported in <code>cancan_microstack/__init__.py</code>, so <code>from cancan_microstack import ...</code> works.</span>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="cli.html">
+        <span class="lbl"><span class="zh">← 上一页</span><span class="en">← Previous</span></span>
+        <span class="ttl"><span class="zh">CLI 参考</span><span class="en">CLI Reference</span></span>
+      </a>
+      <a class="next" href="service-controllersrv.html">
+        <span class="lbl"><span class="zh">下一页 →</span><span class="en">Next →</span></span>
+        <span class="ttl">controllersrv</span>
+      </a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

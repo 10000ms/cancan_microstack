@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>总体架构 / Architecture — Cancan Microstack</title>
+<meta name="description" content="Cancan Microstack architecture: a thin CancanMicrostack facade over three subsystems (AssetManager / ComposeBuilder / ServiceRunner), a runtime strategy layer (workspace / overrides / resources) and three bundled services.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="architecture">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">总体架构</span><span class="en">Architecture</span></h1>
+    <p class="page-lead">
+      <span class="zh">一个很薄的门面，下面挂着三个子系统、一层运行时策略，以及三个内置服务——这就是 Cancan 的全部骨架。理解了它，库里其它代码都能对号入座。</span>
+      <span class="en">A very thin facade sitting on top of three subsystems, one runtime-strategy layer and three bundled services — that is the entire skeleton of Cancan. Once you have it, every other module finds its place.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#overview"><span class="zh">总体架构</span><span class="en">Big picture</span></a>
+      <a href="#core"><span class="zh">core 核心能力</span><span class="en">Core capabilities</span></a>
+      <a href="#runtime"><span class="zh">runtime 运行时策略</span><span class="en">Runtime strategy</span></a>
+      <a href="#call-chain"><span class="zh">一条完整调用链</span><span class="en">A full call chain</span></a>
+      <a href="#stack-up"><span class="zh">整栈启动流程</span><span class="en">Stack startup</span></a>
+      <a href="#principles"><span class="zh">设计原则</span><span class="en">Design principles</span></a>
+    </div>
+
+    <section id="overview">
+      <h2><span class="zh">总体架构</span><span class="en">Big picture</span></h2>
+      <p class="section-sub"><span class="zh">门面在上，能力居中，运行时策略落地，服务与数据在下。</span><span class="en">Facade on top, capabilities in the middle, runtime strategy beneath, services and data at the bottom.</span></p>
+      <p>
+        <span class="zh">最外层是 <code>CancanMicrostack</code> 门面（<code>core/microstack.py</code>）。它只暴露三个高层方法，把活儿分给三个子系统：<code>AssetManager</code> 管包内资产，<code>ComposeBuilder</code> 合成 compose，<code>ServiceRunner</code> 启动服务。三者之下是 <code>runtime/</code> 这一层运行时策略，决定“库被嵌进某个业务仓后，到底在哪儿跑、用谁的文件”。最底下才是真正干活的三个内置服务和它们依赖的数据层。</span>
+        <span class="en">The outermost layer is the <code>CancanMicrostack</code> facade (<code>core/microstack.py</code>). It exposes only three high-level methods and delegates the work to three subsystems: <code>AssetManager</code> for packaged assets, <code>ComposeBuilder</code> for compose synthesis, <code>ServiceRunner</code> for starting services. Below them sits the <code>runtime/</code> strategy layer, which decides — once the library is embedded into a host repo — where it runs and whose files it uses. The three bundled services and their data stores live at the very bottom.</span>
+      </p>
+
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box accent">
+            <div class="t">CancanMicrostack</div>
+            <div class="d"><span class="zh">门面 / Facade · core/microstack.py</span><span class="en">Facade · core/microstack.py</span></div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box">
+            <div class="t">AssetManager</div>
+            <div class="d"><span class="zh">包内资产</span><span class="en">Packaged assets</span></div>
+          </div>
+          <div class="arch-box">
+            <div class="t">ComposeBuilder</div>
+            <div class="d"><span class="zh">合成 compose</span><span class="en">Compose synthesis</span></div>
+          </div>
+          <div class="arch-box">
+            <div class="t">ServiceRunner</div>
+            <div class="d"><span class="zh">启动服务</span><span class="en">Run services</span></div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box">
+            <div class="t">runtime</div>
+            <div class="d">workspace · overrides · resources</div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box">
+            <div class="t">controllersrv</div>
+            <div class="d"><span class="zh">宿主机 daemon</span><span class="en">host daemon</span></div>
+          </div>
+          <div class="arch-box">
+            <div class="t">infrasrv</div>
+            <div class="d"><span class="zh">容器</span><span class="en">container</span></div>
+          </div>
+          <div class="arch-box">
+            <div class="t">opsbffsrv</div>
+            <div class="d"><span class="zh">容器</span><span class="en">container</span></div>
+          </div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box">
+            <div class="t"><span class="zh">数据层</span><span class="en">Data layer</span></div>
+            <div class="d">PostgreSQL · MongoDB · Redis · RabbitMQ · Celery</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note tip">
+        <span class="zh"><strong>读图要点：</strong>箭头是“委托/依赖”方向，不是网络调用。门面把请求委托给子系统；服务真正运行时，<code>controllersrv</code> 跑在宿主机（管容器引擎），<code>infrasrv</code> / <code>opsbffsrv</code> 跑在容器里。</span>
+        <span class="en"><strong>How to read it:</strong> arrows mean delegation/dependency, not network calls. The facade delegates to the subsystems; at runtime <code>controllersrv</code> runs on the host (it drives the container engine) while <code>infrasrv</code> / <code>opsbffsrv</code> run inside containers.</span>
+      </div>
+    </section>
+
+    <section id="core">
+      <h2><span class="zh">core 核心能力</span><span class="en">Core capabilities</span></h2>
+      <p class="section-sub"><span class="zh">资产、合成、运行——三件事，三个类。</span><span class="en">Assets, synthesis, running — three jobs, three classes.</span></p>
+
+      <h3>AssetManager <span class="muted">— <span class="zh">把静态文件当包资源</span><span class="en">assets as package resources</span></span></h3>
+      <p>
+        <span class="zh">资产指 <code>cancan_microstack/assets/</code> 里随包发布的静态文件：compose 模板、DDL、脚本、运维前端等。<code>AssetManager</code> 用标准库 <code>importlib.resources</code> 访问它们——<code>resources.files(...)</code> 拿到可遍历的资源树，<code>resources.as_file(...)</code> 把资源“物化”成真实路径，即使资源被打进 wheel/zip 也能用。</span>
+        <span class="en">An asset is a static file shipped with the package under <code>cancan_microstack/assets/</code>: compose templates, DDL, scripts, the ops UI. <code>AssetManager</code> reaches them through the stdlib <code>importlib.resources</code> — <code>resources.files(...)</code> gives a traversable tree, and <code>resources.as_file(...)</code> materializes a resource into a real path, even when it is bundled inside a wheel/zip.</span>
+      </p>
+      <ul>
+        <li><span class="zh"><strong>逻辑名（logical name）</strong>：调用方用稳定的逻辑路径引用资产，例如 <code>docker/docker-compose.infra.yml</code>，不必关心库内部真实文件在哪。</span><span class="en"><strong>Logical name</strong>: callers reference assets by a stable path such as <code>docker/docker-compose.infra.yml</code>, never the library's real on-disk location.</span></li>
+        <li><span class="zh"><code>list_assets(subdir)</code> 递归遍历并返回 <code>AssetRecord(logical_name, path, is_dir)</code>；遍历时跳过 <code>__pycache__</code> 与 <code>.DS_Store</code>。</span><span class="en"><code>list_assets(subdir)</code> walks recursively and returns <code>AssetRecord(logical_name, path, is_dir)</code>, skipping <code>__pycache__</code> and <code>.DS_Store</code>.</span></li>
+        <li><span class="zh"><code>export_asset(...)</code> 把资产复制进工作区：目录用 <code>shutil.copytree</code>，文件用 <code>shutil.copy2</code>。这一步很关键——Docker 只看挂载进来的工作区路径，不会去 venv 里翻 site-packages。</span><span class="en"><code>export_asset(...)</code> copies an asset into the workspace: <code>shutil.copytree</code> for directories, <code>shutil.copy2</code> for files. This matters — Docker only sees the mounted workspace path, never site-packages inside the venv.</span></li>
+        <li><span class="zh"><code>read_text(...)</code> 读文本，<code>resolve_path(...)</code> 物化出一个可读的 <code>Path</code>（<code>ComposeBuilder</code> 就用它加载 base compose）。</span><span class="en"><code>read_text(...)</code> reads text; <code>resolve_path(...)</code> materializes a readable <code>Path</code> (used by <code>ComposeBuilder</code> to load the base compose).</span></li>
+      </ul>
+      <div class="note warn">
+        <span class="zh"><strong>一个易踩的坑：</strong>不要用 <code>as_file(...)</code> 物化出的路径反推逻辑名。打包成 zip/wheel 时每个节点可能被物化到不同临时目录，<code>relative_to()</code> 会失败并丢前缀（返回 <code>infra</code> 而不是 <code>ddl/infra</code>）。源码因此在遍历时自行拼接 <code>logical_name</code>。</span>
+        <span class="en"><strong>A real trap:</strong> never derive the logical name from a path materialized by <code>as_file(...)</code>. When packaged as a zip/wheel, each node may land in a different temp dir, so <code>relative_to()</code> fails and drops the prefix (returning <code>infra</code> instead of <code>ddl/infra</code>). The code therefore builds <code>logical_name</code> itself during the walk.</span>
+      </div>
+
+      <h3>ComposeBuilder <span class="muted">— <span class="zh">把多份 compose 深度合并成一个栈</span><span class="en">deep-merge many composes into one stack</span></span></h3>
+      <p>
+        <span class="zh">合成的顺序固定：以内置 infra compose 为 base（默认资产 <code>docker/docker-compose.infra.yml</code>），先合并业务 compose（可选），再依次合并多份 overrides，最后写出 <code>compose.cancan.yml</code>（默认在工作区根）。后应用的优先级更高。</span>
+        <span class="en">The synthesis order is fixed: start from the built-in infra compose as the base (default asset <code>docker/docker-compose.infra.yml</code>), merge the business compose (optional), then merge the overrides in order, and finally write <code>compose.cancan.yml</code> (workspace root by default). Whatever is applied later wins.</span>
+      </p>
+      <pre><code><span class="tok-c"># 合成顺序 / merge order</span>
+base (docker/docker-compose.infra.yml)
+  <span class="tok-f">→ deep_merge</span> service_file   <span class="tok-c"># 业务 compose，可选 / optional</span>
+  <span class="tok-f">→ deep_merge</span> override[0]    <span class="tok-c"># 多份覆盖，依次叠加 / overrides, in order</span>
+  <span class="tok-f">→ deep_merge</span> override[1]
+  <span class="tok-f">→</span> compose.cancan.yml      <span class="tok-c"># yaml.safe_dump(sort_keys=False)</span></code></pre>
+      <p><span class="zh">递归合并规则 <code>_deep_merge(base, override)</code> 只有三条：</span><span class="en">The recursive rule <code>_deep_merge(base, override)</code> has just three cases:</span></p>
+      <ol>
+        <li><span class="zh">key 在 base 里不存在 → 直接取 override 的值（深拷贝）。</span><span class="en">key absent in base → take the override value (deep-copied).</span></li>
+        <li><span class="zh">两边都是 dict → 递归合并。</span><span class="en">both sides are dicts → recurse.</span></li>
+        <li><span class="zh">其它情况 → override 覆盖 base（包括列表，整段替换而非拼接）。</span><span class="en">otherwise → override replaces base (lists included — replaced wholesale, not concatenated).</span></li>
+      </ol>
+      <p><span class="zh">写出前还有两处清洗：移除已弃用的 <code>version</code> 字段；对非 external 的网络去掉固定 <code>name</code>，让 compose 生成项目级网络名以避免与历史网络撞名；并对带 <code>build</code> 的服务补 <code>pull_policy: never</code>，优先本地构建。</span><span class="en">Before writing it also normalizes twice: it drops the deprecated <code>version</code> field; for non-external networks it removes the fixed <code>name</code> so compose generates a project-scoped name (avoiding collisions with legacy networks); and for services with a <code>build</code> section it sets <code>pull_policy: never</code> to prefer local builds.</span></p>
+
+      <h3>ServiceRunner <span class="muted">— <span class="zh">服务名 → 入口点字符串 → 动态调用</span><span class="en">name → entrypoint string → dynamic call</span></span></h3>
+      <p>
+        <span class="zh"><code>ServiceRunner</code> 把服务名映射成一个“入口点字符串”，再动态 import 并调用其 <code>main(host, port)</code>。映射写死在 <code>_ENTRYPOINTS</code> 字典里：</span>
+        <span class="en"><code>ServiceRunner</code> maps a service name to an "entrypoint string", then dynamically imports it and calls its <code>main(host, port)</code>. The mapping is a hard-coded <code>_ENTRYPOINTS</code> dict:</span>
+      </p>
+      <pre><code>controllersrv <span class="tok-k">-></span> cancan_microstack.cmd.controllersrv.run:main
+infrasrv      <span class="tok-k">-></span> cancan_microstack.cmd.infrasrv.run:main
+opsbffsrv     <span class="tok-k">-></span> cancan_microstack.cmd.opsbffsrv.run:main</code></pre>
+      <ul>
+        <li><span class="zh"><code>run(...)</code> 是同步入口，内部 <code>asyncio.run(run_async(...))</code>。</span><span class="en"><code>run(...)</code> is the sync entry; it wraps <code>asyncio.run(run_async(...))</code>.</span></li>
+        <li><span class="zh">启动前先 <code>bootstrap_from_workspace(...)</code>，把工作区与覆盖目录一次性配好。</span><span class="en">Before launch it runs <code>bootstrap_from_workspace(...)</code> to wire up the workspace and override dir in one shot.</span></li>
+        <li><span class="zh">用 <code>inspect.isawaitable(result)</code> 兼容同步/异步入口：是 awaitable 就 <code>await</code>，否则直接返回。所以 <code>cmd/*</code> 的 <code>main</code> 写成同步或异步都行。</span><span class="en">It uses <code>inspect.isawaitable(result)</code> to support both sync and async entries: if awaitable it awaits, otherwise it returns. So a <code>cmd/*</code> <code>main</code> can be written either way.</span></li>
+      </ul>
+      <p>
+        <span class="zh">整栈生命周期则由 <code>StackManager</code>（<code>core/stack_manager.py</code>）统一管理：它既调 <code>ComposeBuilder</code> 出文件、调 compose 引擎起容器，也负责把 <code>controllersrv</code> 作为宿主机 daemon 后台拉起（pidfile 管理）并做健康检查。</span>
+        <span class="en">Whole-stack lifecycle is owned by <code>StackManager</code> (<code>core/stack_manager.py</code>): it builds the compose file, drives the compose engine to bring up containers, and also launches <code>controllersrv</code> as a background host daemon (pidfile-managed) and health-checks it.</span>
+      </p>
+    </section>
+
+    <section id="runtime">
+      <h2><span class="zh">runtime 运行时策略</span><span class="en">Runtime strategy</span></h2>
+      <p class="section-sub"><span class="zh">库被嵌进业务仓后，“在哪儿跑、用谁的文件、怎么后台运行”都在这一层。</span><span class="en">Once embedded into a host repo, "where it runs, whose files it uses, how it daemonizes" all live here.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">模块</span><span class="en">Module</span></th>
+          <th><span class="zh">职责</span><span class="en">Responsibility</span></th>
+          <th><span class="zh">关键点</span><span class="en">Key points</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>workspace.py</code></td>
+            <td><span class="zh">探测并配置工作区根目录。</span><span class="en">Detect and configure the workspace root.</span></td>
+            <td><span class="zh">优先环境变量 <code>CANCAN_WORKSPACE_ROOT</code>；否则从 <code>cwd</code> 向上找标记（<code>cmd</code> / <code>pyproject.toml</code> / <code>server_log_data</code> 等）。提供 <code>ensure_server_log_dir</code> / <code>ensure_subdir</code>。</span><span class="en">Prefers env <code>CANCAN_WORKSPACE_ROOT</code>; otherwise walks up from <code>cwd</code> for markers (<code>cmd</code> / <code>pyproject.toml</code> / <code>server_log_data</code> …). Offers <code>ensure_server_log_dir</code> / <code>ensure_subdir</code>.</span></td>
+          </tr>
+          <tr>
+            <td><code>overrides.py</code></td>
+            <td><span class="zh">不 fork 就能局部覆盖服务实现/配置。</span><span class="en">Override service code/config locally without forking.</span></td>
+            <td><span class="zh">发现 <code>cancan_overrides/</code>（或 <code>CANCAN_OVERRIDE_ROOT</code>），用 <code>pkgutil.extend_path</code> 把 <code>cancan_overrides/&lt;service&gt;</code> 插到搜索路径最前。<code>bootstrap_from_workspace</code> 把它和 workspace 串起来。</span><span class="en">Discovers <code>cancan_overrides/</code> (or <code>CANCAN_OVERRIDE_ROOT</code>) and prepends <code>cancan_overrides/&lt;service&gt;</code> to the search path via <code>pkgutil.extend_path</code>. <code>bootstrap_from_workspace</code> ties it to the workspace.</span></td>
+          </tr>
+          <tr>
+            <td><code>resources.py</code></td>
+            <td><span class="zh">工作区文件优先，包内资产兜底。</span><span class="en">Prefer workspace files; fall back to packaged assets.</span></td>
+            <td><span class="zh"><code>resolve_workspace_or_asset(relative_path, asset_logical)</code>：先看工作区路径在不在，不在才回退到 <code>AssetManager.resolve_path</code>。</span><span class="en"><code>resolve_workspace_or_asset(relative_path, asset_logical)</code>: check the workspace path first, fall back to <code>AssetManager.resolve_path</code> only if missing.</span></td>
+          </tr>
+          <tr>
+            <td><code>host_daemon.py</code></td>
+            <td><span class="zh">宿主机后台进程管理（仅标准库）。</span><span class="en">Host-side daemon management (stdlib only).</span></td>
+            <td><span class="zh"><code>start_daemon</code> / <code>stop_daemon</code> 基于 pidfile：已存活则复用，停止走 SIGTERM→SIGKILL；不覆盖用户已有进程与日志。<code>controllersrv</code> 用它常驻。</span><span class="en"><code>start_daemon</code> / <code>stop_daemon</code> use a pidfile: reuse if alive, stop via SIGTERM→SIGKILL, never clobber the user's processes/logs. Used to keep <code>controllersrv</code> resident.</span></td>
+          </tr>
+          <tr>
+            <td><code>compose_cmd.py</code></td>
+            <td><span class="zh">探测并执行 Docker/Podman Compose。</span><span class="en">Detect and run Docker/Podman Compose.</span></td>
+            <td><span class="zh"><code>detect_compose_command(engine)</code> 自动选 <code>docker compose</code> / <code>podman compose</code>（先验 CLI 再 probe daemon）；<code>run_compose_streaming</code> 实时打印并同时落日志。</span><span class="en"><code>detect_compose_command(engine)</code> auto-selects <code>docker compose</code> / <code>podman compose</code> (CLI check then daemon probe); <code>run_compose_streaming</code> streams output while teeing to a log file.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="call-chain">
+      <h2><span class="zh">一条完整调用链</span><span class="en">A full call chain</span></h2>
+      <p class="section-sub"><span class="zh">以 <code>cancan services run infrasrv</code> 为例，看一次命令如何抵达服务入口。</span><span class="en">Tracing <code>cancan services run infrasrv</code> from the CLI down to the service entry.</span></p>
+      <ol class="steps">
+        <li><span class="zh"><strong>CLI 解析</strong>：<code>cli/main.py:main()</code> 用 argparse 解出 <code>name=infrasrv</code>、host、port、workspace，并构造 <code>stack = CancanMicrostack()</code>。</span><span class="en"><strong>CLI parse</strong>: <code>cli/main.py:main()</code> parses <code>name=infrasrv</code>, host, port, workspace via argparse and constructs <code>stack = CancanMicrostack()</code>.</span></li>
+        <li><span class="zh"><strong>委托门面</strong>：调用 <code>stack.run_service("infrasrv", host, port, workspace)</code>，门面记一行日志后转交 <code>ServiceRunner</code>。</span><span class="en"><strong>Delegate to facade</strong>: calls <code>stack.run_service("infrasrv", host, port, workspace)</code>; the facade logs once and hands off to <code>ServiceRunner</code>.</span></li>
+        <li><span class="zh"><strong>进事件循环</strong>：<code>ServiceRunner.run(...)</code> 执行 <code>asyncio.run(run_async(...))</code>。</span><span class="en"><strong>Enter the loop</strong>: <code>ServiceRunner.run(...)</code> executes <code>asyncio.run(run_async(...))</code>.</span></li>
+        <li><span class="zh"><strong>bootstrap</strong>：<code>bootstrap_from_workspace(workspace)</code> 先 <code>configure_workspace</code>，再发现并 <code>configure_overrides</code>。</span><span class="en"><strong>bootstrap</strong>: <code>bootstrap_from_workspace(workspace)</code> first <code>configure_workspace</code>, then discovers and <code>configure_overrides</code>.</span></li>
+        <li><span class="zh"><strong>解析入口点</strong>：从 <code>_ENTRYPOINTS</code> 取出 <code>cancan_microstack.cmd.infrasrv.run:main</code>，<code>import_module</code> + <code>getattr</code> 拿到函数。</span><span class="en"><strong>Resolve entrypoint</strong>: look up <code>cancan_microstack.cmd.infrasrv.run:main</code> in <code>_ENTRYPOINTS</code>, then <code>import_module</code> + <code>getattr</code>.</span></li>
+        <li><span class="zh"><strong>调用 main</strong>：<code>result = main(host=host, port=port)</code>；若 <code>inspect.isawaitable(result)</code> 则 <code>await</code>。服务入口从这里接管 web server、路由与配置。</span><span class="en"><strong>Invoke main</strong>: <code>result = main(host=host, port=port)</code>; if <code>inspect.isawaitable(result)</code> then <code>await</code>. The service entry now takes over the web server, routes and config.</span></li>
+      </ol>
+    </section>
+
+    <section id="stack-up">
+      <h2><span class="zh">整栈启动流程</span><span class="en">Stack startup</span></h2>
+      <p class="section-sub"><span class="zh"><code>cancan stack up</code> 把构建、引导、daemon、容器、健康检查串成一条流水线。</span><span class="en"><code>cancan stack up</code> chains build, bootstrap, daemon, containers and health check into one pipeline.</span></p>
+      <ol class="steps">
+        <li><span class="zh"><strong>构建 compose</strong>：<code>StackManager.build(options)</code> → <code>ComposeBuilder</code> 合成 <code>compose.cancan.yml</code>。</span><span class="en"><strong>Build compose</strong>: <code>StackManager.build(options)</code> → <code>ComposeBuilder</code> synthesizes <code>compose.cancan.yml</code>.</span></li>
+        <li><span class="zh"><strong>bootstrap 工作区</strong>：缺失则生成 <code>cmd/*</code> 包装器、导出 infra compose / DDL / 运维前端等资产（<code>_bootstrap_workspace_files</code>，不覆盖已有文件）。</span><span class="en"><strong>Bootstrap workspace</strong>: generate <code>cmd/*</code> wrappers and export infra compose / DDL / ops UI assets when missing (<code>_bootstrap_workspace_files</code>, never overwriting existing files).</span></li>
+        <li><span class="zh"><strong>起 controllersrv daemon</strong>：<code>start_controllersrv</code> 以宿主机后台进程拉起 <code>cancan services run controllersrv</code>，写 pidfile，并把容器引擎偏好透传给它。</span><span class="en"><strong>Start controllersrv daemon</strong>: <code>start_controllersrv</code> launches <code>cancan services run controllersrv</code> as a background host process, writes a pidfile and propagates the container-engine preference.</span></li>
+        <li><span class="zh"><strong>compose up -d</strong>：<code>compose_up</code> 经 <code>run_compose_streaming</code> 拉起 <code>infrasrv</code> / <code>opsbffsrv</code> 等容器，日志同时落到 <code>server_log_data/stack/compose.up.log</code>。</span><span class="en"><strong>compose up -d</strong>: <code>compose_up</code> via <code>run_compose_streaming</code> brings up containers (<code>infrasrv</code> / <code>opsbffsrv</code> …), teeing logs to <code>server_log_data/stack/compose.up.log</code>.</span></li>
+        <li><span class="zh"><strong>健康检查</strong>：<code>wait_controllersrv_ready</code> 在超时窗口内轮询 <code>/internal/health</code>，未就绪则打印警告并提示查看 daemon 日志。</span><span class="en"><strong>Health check</strong>: <code>wait_controllersrv_ready</code> polls <code>/internal/health</code> within a timeout; if not ready it warns and points to the daemon log.</span></li>
+      </ol>
+    </section>
+
+    <section id="principles" style="border-bottom:none">
+      <h2><span class="zh">设计原则</span><span class="en">Design principles</span></h2>
+      <p class="section-sub"><span class="zh">整套架构其实只立足于两个想法。</span><span class="en">The whole architecture rests on just two ideas.</span></p>
+      <div class="grid">
+        <div class="card">
+          <span class="ic">📦</span>
+          <h4><span class="zh">资产即包资源</span><span class="en">Assets as package resources</span></h4>
+          <p><span class="zh">compose / DDL / 脚本 / 运维前端跟代码一起发布，由 <code>AssetManager</code> 统一“列出 / 导出 / 读取 / 解析路径”。基础设施随<strong>库版本</strong>演进，业务仓不再 copy-paste 模板。</span><span class="en">compose / DDL / scripts / ops UI ship with the code and are listed / exported / read / resolved through <code>AssetManager</code>. Infrastructure evolves with the <strong>library version</strong> — no more copy-pasted templates in product repos.</span></p>
+        </div>
+        <div class="card">
+          <span class="ic">🧭</span>
+          <h4><span class="zh">工作区 + 覆盖作为运行时策略统一注入</span><span class="en">Workspace + overrides injected as one runtime strategy</span></h4>
+          <p><span class="zh"><code>workspace</code> 决定“你在哪个业务仓里跑”，<code>overrides</code> 让业务仓用 <code>cancan_overrides/</code> 局部替换实现，<code>ServiceRunner</code> 启动前统一 bootstrap——一致性内建，服务自身不必各写一套路径探测。</span><span class="en"><code>workspace</code> decides which host repo you run in, <code>overrides</code> lets the repo swap pieces via <code>cancan_overrides/</code>, and <code>ServiceRunner</code> bootstraps both before launch — consistency is built in, so services don't each reinvent path detection.</span></p>
+        </div>
+      </div>
+      <div class="note">
+        <span class="zh">一句话收尾：<strong>core 提供能力，runtime 提供“在业务仓里怎么落地”的策略，CLI 把能力串成统一工具链。</strong></span>
+        <span class="en">In one line: <strong>core provides capabilities, runtime provides the strategy for landing them in a host repo, and the CLI threads the capabilities into one toolchain.</strong></span>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="concepts.html">
+        <span class="lbl"><span class="zh">← 上一页</span><span class="en">← Previous</span></span>
+        <span class="ttl"><span class="zh">核心概念</span><span class="en">Core Concepts</span></span>
+      </a>
+      <a class="next" href="cli.html">
+        <span class="lbl"><span class="zh">下一页 →</span><span class="en">Next →</span></span>
+        <span class="ttl"><span class="zh">CLI 参考</span><span class="en">CLI Reference</span></span>
+      </a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

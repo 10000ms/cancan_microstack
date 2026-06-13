@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API 索引 / API Index — Cancan Microstack</title>
+<meta name="description" content="API Index for Cancan Microstack: a quick-reference overview of 100+ HTTP endpoints across controllersrv, infrasrv and opsbffsrv.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="api-reference">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">API 索引</span><span class="en">API Index</span></h1>
+    <p class="page-lead">
+      <span class="zh">三个服务 100+ 个 HTTP 接口的总览速查。每个接口给出方法、路径与一句话用途；字段级细节见各服务详情页。</span>
+      <span class="en">A quick-reference overview of 100+ HTTP endpoints across three services. Each entry lists the method, path and a one-line purpose; field-level detail lives on the per-service pages.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#envelope"><span class="zh">响应约定</span><span class="en">Response envelope</span></a>
+      <a href="#controllersrv">controllersrv</a>
+      <a href="#infrasrv">infrasrv</a>
+      <a href="#opsbffsrv">opsbffsrv</a>
+    </div>
+
+    <section id="envelope">
+      <h2><span class="zh">统一响应约定</span><span class="en">Response envelope</span></h2>
+      <p class="section-sub"><span class="zh">读懂一次，全站通用——下面所有接口都遵循同一个包装。</span><span class="en">Learn it once: every endpoint below follows the same wrapper.</span></p>
+      <div class="note">
+        <span class="zh"><strong>统一 <code>APIResponse</code> 包装。</strong>所有响应都包成 <code>{ success, error: { code, msg }, data }</code>：<code>success</code> 表示业务是否成功，<code>data</code> 是业务载荷，错误经由统一 <code>ErrorCode</code> 表达（<code>0</code>=成功、<code>4000</code>=参数错误、<code>4001</code>=未登录、<code>4004</code>=未找到、<code>5000</code>=系统错误、<code>5001</code>=服务管理错误、<code>5100</code>=网络错误等）。下表只列方法、路径与用途，不重复展开包装。</span>
+        <span class="en"><strong>Unified <code>APIResponse</code> wrapper.</strong> Every response is wrapped as <code>{ success, error: { code, msg }, data }</code>: <code>success</code> is the business outcome, <code>data</code> is the payload, and failures are expressed through a unified <code>ErrorCode</code> (<code>0</code> = success, <code>4000</code> = invalid param, <code>4001</code> = not logged in, <code>4004</code> = not found, <code>5000</code> = system error, <code>5001</code> = service-management error, <code>5100</code> = network error, …). The tables below list method, path and purpose only — they don't repeat the wrapper.</span>
+      </div>
+      <p>
+        <span class="zh">路径中的 <code>{…}</code> 为路径参数（如 <code>{workflow_id}</code>、<code>{id:uuid}</code>、<code>{path:path}</code> 通配子路径）。所有接口都挂在 Caddy 网关之后，外部统一经网关访问，不直接暴露服务端口。</span>
+        <span class="en">A <code>{…}</code> in a path is a path parameter (e.g. <code>{workflow_id}</code>, <code>{id:uuid}</code>, or <code>{path:path}</code> for a wildcard sub-path). All endpoints sit behind the Caddy gateway; external traffic goes through the gateway rather than hitting service ports directly.</span>
+      </p>
+    </section>
+
+    <section id="controllersrv">
+      <h2>controllersrv</h2>
+      <p class="section-sub"><span class="zh">宿主机进程，封装 Docker/Podman 容器操作。操作型接口异步入队返回任务 ID，查询型接口直接返回结果。详见 <a href="service-controllersrv.html">controllersrv 详情</a>。</span><span class="en">The host process that drives Docker/Podman. Operation endpoints enqueue async tasks and return a task ID; query endpoints return results directly. See <a href="service-controllersrv.html">controllersrv in depth</a>.</span></p>
+
+      <h3><span class="zh">服务操作（异步）</span><span class="en">Service operations (async)</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/controllersrv/service/start</code></td><td><span class="zh">启动服务，任务入队异步执行，返回任务 ID。</span><span class="en">Start a service; enqueues an async task and returns a task ID.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/controllersrv/service/stop</code></td><td><span class="zh">停止指定服务/实例，异步执行。</span><span class="en">Stop a service/instance asynchronously.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/controllersrv/service/restart</code></td><td><span class="zh">重启服务（stop → start），异步执行。</span><span class="en">Restart a service (stop → start), asynchronously.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">任务与队列查询</span><span class="en">Task &amp; queue queries</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/task/status</code></td><td><span class="zh">按任务 ID 查询任务状态与执行结果。</span><span class="en">Query a task's status and result by task ID.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/task/list</code></td><td><span class="zh">列出任务（队列中或历史）。</span><span class="en">List tasks (queued or historical).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/queue/stats</code></td><td><span class="zh">任务队列统计（总数/等待/运行/失败）。</span><span class="en">Task queue stats (total / waiting / running / failed).</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">服务状态查询</span><span class="en">Service status queries</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/service/status</code></td><td><span class="zh">查询单个服务的运行状态、实例数与健康状况。</span><span class="en">A single service's status, instance count and health.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/service/list</code></td><td><span class="zh">列出已管理的服务及简要信息。</span><span class="en">List managed services with brief info.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/container/health</code></td><td><span class="zh">查询指定容器的健康信息。</span><span class="en">Health info for a given container.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">容器管理（UnifiedExecutor）</span><span class="en">Container management (UnifiedExecutor)</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/containers/list</code></td><td><span class="zh">列出项目的所有容器。</span><span class="en">List all containers of the project.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/container/inspect</code></td><td><span class="zh">获取容器详细信息。</span><span class="en">Inspect a container's detail.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/container/logs</code></td><td><span class="zh">获取容器日志。</span><span class="en">Fetch a container's logs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/images/list</code></td><td><span class="zh">列出所有镜像。</span><span class="en">List all images.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/networks/list</code></td><td><span class="zh">列出所有网络。</span><span class="en">List all networks.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/volumes/list</code></td><td><span class="zh">列出所有卷。</span><span class="en">List all volumes.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/controllersrv/engine/health</code></td><td><span class="zh">检查容器引擎健康状态。</span><span class="en">Check the container engine's health.</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="infrasrv">
+      <h2>infrasrv</h2>
+      <p class="section-sub"><span class="zh">服务注册、配置下发、健康检查与工作流引擎。<code>internal/*</code> 为服务间内部接口（多由 controllersrv 调用）。详见 <a href="service-infrasrv.html">infrasrv 详情</a> 与 <a href="workflow-api.html">工作流 API</a>。</span><span class="en">Registry, config push, health checks and the workflow engine. <code>internal/*</code> are inter-service internal endpoints (mostly called by controllersrv). See <a href="service-infrasrv.html">infrasrv in depth</a> and the <a href="workflow-api.html">Workflow API</a>.</span></p>
+
+      <h3><span class="zh">服务配置</span><span class="en">Service config</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_config</code></td><td><span class="zh">获取单个服务配置项。</span><span class="en">Get a single service config entry.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_configs</code></td><td><span class="zh">获取某服务的全部配置。</span><span class="en">Get all config entries of a service.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service_config</code></td><td><span class="zh">新增配置项。</span><span class="en">Insert a config entry.</span></td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/infrasrv/service_config</code></td><td><span class="zh">更新配置项。</span><span class="en">Update a config entry.</span></td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/service_config</code></td><td><span class="zh">删除配置项。</span><span class="en">Delete a config entry.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/config/push</code></td><td><span class="zh">触发配置下发（内部）。</span><span class="en">Trigger a config push (internal).</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">服务管理与注册</span><span class="en">Service management &amp; registry</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/start</code></td><td><span class="zh">启动服务（供 opsbffsrv 调用）。</span><span class="en">Start a service (called by opsbffsrv).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/stop</code></td><td><span class="zh">停止服务。</span><span class="en">Stop a service.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/service/restart</code></td><td><span class="zh">重启服务。</span><span class="en">Restart a service.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/registry/register</code></td><td><span class="zh">注册服务实例。</span><span class="en">Register a service instance.</span></td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/registry/deregister</code></td><td><span class="zh">注销服务实例。</span><span class="en">Deregister a service instance.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/registry/instances</code></td><td><span class="zh">获取服务实例列表。</span><span class="en">List a service's instances.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/health/check_instances</code></td><td><span class="zh">触发所有实例的健康检查。</span><span class="en">Trigger health checks across all instances.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">内部操作管理</span><span class="en">Internal operation management</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/operation/create</code></td><td><span class="zh">创建操作记录（内部）。</span><span class="en">Create an operation record (internal).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/operation/update</code></td><td><span class="zh">更新操作状态/结果（内部）。</span><span class="en">Update operation status/result (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/get</code></td><td><span class="zh">查询单个操作（内部）。</span><span class="en">Get a single operation (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/status</code></td><td><span class="zh">查询操作状态（内部）。</span><span class="en">Get operation status (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/list</code></td><td><span class="zh">列出操作历史（内部）。</span><span class="en">List operation history (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/operation/check_timeouts</code></td><td><span class="zh">检查超时操作（内部）。</span><span class="en">Check for timed-out operations (internal).</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">内部实例管理</span><span class="en">Internal instance management</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/create</code></td><td><span class="zh">创建实例记录（内部）。</span><span class="en">Create an instance record (internal).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/update</code></td><td><span class="zh">更新实例（内部）。</span><span class="en">Update an instance (internal).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/instance/delete</code></td><td><span class="zh">删除实例（内部）。</span><span class="en">Delete an instance (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/get</code></td><td><span class="zh">查询单个实例（内部）。</span><span class="en">Get a single instance (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/list</code></td><td><span class="zh">列出实例（内部）。</span><span class="en">List instances (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/count</code></td><td><span class="zh">统计实例数（内部）。</span><span class="en">Count instances (internal).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/internal/instance/get_next_port</code></td><td><span class="zh">分配下一个可用端口（内部）。</span><span class="en">Allocate the next free port (internal).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/internal/service_info/update_replicas</code></td><td><span class="zh">更新服务副本数（内部）。</span><span class="en">Update a service's replica count (internal).</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">日志与钩子监控</span><span class="en">Logs &amp; hook monitoring</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/service_logs</code></td><td><span class="zh">查询服务日志（供 opsbffsrv 调用）。</span><span class="en">Query service logs (called by opsbffsrv).</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/metrics</code></td><td><span class="zh">钩子指标。</span><span class="en">Hook metrics.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/history</code></td><td><span class="zh">钩子执行历史。</span><span class="en">Hook execution history.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/status</code></td><td><span class="zh">钩子状态。</span><span class="en">Hook status.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/hooks/metrics/reset</code></td><td><span class="zh">重置钩子指标。</span><span class="en">Reset hook metrics.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/hooks/performance</code></td><td><span class="zh">钩子性能数据。</span><span class="en">Hook performance data.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">工作流引擎</span><span class="en">Workflow engine</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows</code></td><td><span class="zh">创建工作流定义。</span><span class="en">Create a workflow definition.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows</code></td><td><span class="zh">列出工作流。</span><span class="en">List workflows.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/stats</code></td><td><span class="zh">工作流统计概览。</span><span class="en">Workflow statistics overview.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">获取单个工作流定义。</span><span class="en">Get a single workflow definition.</span></td></tr>
+          <tr><td><code>PUT</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">更新工作流定义。</span><span class="en">Update a workflow definition.</span></td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}</code></td><td><span class="zh">删除工作流。</span><span class="en">Delete a workflow.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/versions</code></td><td><span class="zh">列出版本快照。</span><span class="en">List version snapshots.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/rollback</code></td><td><span class="zh">回滚到指定版本。</span><span class="en">Roll back to a version.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/{workflow_id}/trigger</code></td><td><span class="zh">触发一次运行。</span><span class="en">Trigger a run.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs</code></td><td><span class="zh">列出运行实例。</span><span class="en">List runs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs/{run_id}/status</code></td><td><span class="zh">获取运行的图状态。</span><span class="en">Get a run's graph status.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/runs/{run_id}/nodes/{node_id}/history</code></td><td><span class="zh">获取节点执行历史。</span><span class="en">Get a node's execution history.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/callbacks/{node_instance_id}</code></td><td><span class="zh">外部异步回调入口（节点完成回调）。</span><span class="en">External async callback entry (node completion).</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">工作流告警</span><span class="en">Workflow alerts</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/infrasrv/workflows/alerts</code></td><td><span class="zh">列出引擎告警。</span><span class="en">List engine alerts.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/alerts/{alert_id}/ack</code></td><td><span class="zh">确认告警。</span><span class="en">Acknowledge an alert.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/infrasrv/workflows/alerts/{alert_id}/resolve</code></td><td><span class="zh">解决告警。</span><span class="en">Resolve an alert.</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="opsbffsrv" style="border-bottom:none">
+      <h2>opsbffsrv</h2>
+      <p class="section-sub"><span class="zh">运维 BFF：为 adminops 前端聚合接口——认证、服务/实例运维、日志、Caddy 网关、数据库管理、工作流运维与对内置可视化工具的代理。详见 <a href="service-opsbffsrv.html">opsbffsrv 详情</a>。</span><span class="en">The ops BFF that aggregates endpoints for the admin UI — auth, service/instance ops, logs, the Caddy gateway, database admin, workflow ops, and proxies to bundled visualization tools. See <a href="service-opsbffsrv.html">opsbffsrv in depth</a>.</span></p>
+
+      <h3><span class="zh">认证</span><span class="en">Authentication</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/auth/captcha</code></td><td><span class="zh">获取图形验证码。</span><span class="en">Get an image captcha.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/login</code></td><td><span class="zh">用户名 + 密码登录。</span><span class="en">Username + password login.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/setup</code></td><td><span class="zh">获取 TOTP 绑定信息（二维码）。</span><span class="en">Get TOTP binding info (QR code).</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/bind</code></td><td><span class="zh">绑定 TOTP。</span><span class="en">Bind TOTP.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/auth/totp/verify</code></td><td><span class="zh">校验 TOTP 验证码。</span><span class="en">Verify a TOTP code.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/auth/session</code></td><td><span class="zh">检查当前 session。</span><span class="en">Check the current session.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">服务配置与注册</span><span class="en">Service config &amp; registry</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_config</code></td><td><span class="zh">获取单个服务配置。</span><span class="en">Get a service config entry.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_config/all</code></td><td><span class="zh">获取全部服务配置。</span><span class="en">Get all config entries.</span></td></tr>
+          <tr><td><code>POST</code> · <code>PUT</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/service_config</code></td><td><span class="zh">新增 / 更新 / 删除服务配置。</span><span class="en">Insert / update / delete a config entry.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instances</code></td><td><span class="zh">获取指定服务的实例。</span><span class="en">Instances of a given service.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instances/all</code></td><td><span class="zh">获取全部服务的全部实例。</span><span class="en">All instances of all services.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/instance</code></td><td><span class="zh">获取单个实例详情。</span><span class="en">A single instance's detail.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/services</code></td><td><span class="zh">列出已注册服务名。</span><span class="en">List registered service names.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/registry/services/overview</code></td><td><span class="zh">服务概览。</span><span class="en">Services overview.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">异步操作与实例管理</span><span class="en">Async operations &amp; instances</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/start</code></td><td><span class="zh">异步启动服务。</span><span class="en">Start a service asynchronously.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/stop</code></td><td><span class="zh">异步停止服务。</span><span class="en">Stop a service asynchronously.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/async/service/restart</code></td><td><span class="zh">异步重启服务。</span><span class="en">Restart a service asynchronously.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/operation/status</code></td><td><span class="zh">查询异步操作状态。</span><span class="en">Query an async operation's status.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/operation/list</code></td><td><span class="zh">列出异步操作历史。</span><span class="en">List async operation history.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/list</code></td><td><span class="zh">列出服务实例。</span><span class="en">List service instances.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/detail</code></td><td><span class="zh">获取实例详情。</span><span class="en">Get instance detail.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/instance/stats</code></td><td><span class="zh">实例统计。</span><span class="en">Instance stats.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">日志查询</span><span class="en">Log queries</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_logs</code></td><td><span class="zh">获取服务日志。</span><span class="en">Get service logs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/service_logs/by_service</code></td><td><span class="zh">按服务获取日志。</span><span class="en">Get logs grouped by service.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/logs/search</code></td><td><span class="zh">检索业务日志。</span><span class="en">Search business logs.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">Caddy — 路由</span><span class="en">Caddy — routes</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/routes</code></td><td><span class="zh">创建路由。</span><span class="en">Create a route.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/routes</code></td><td><span class="zh">列出路由。</span><span class="en">List routes.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/routes/sync</code></td><td><span class="zh">同步所有路由到 Caddy。</span><span class="en">Sync all routes to Caddy.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/routes/statistics</code></td><td><span class="zh">路由统计。</span><span class="en">Route statistics.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/routes/by-domain/{domain}</code></td><td><span class="zh">按域名查路由。</span><span class="en">Get routes by domain.</span></td></tr>
+          <tr><td><code>GET</code> · <code>PUT</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/caddy/routes/{route_id}</code></td><td><span class="zh">获取 / 更新 / 删除单个路由。</span><span class="en">Get / update / delete a route.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/routes/{route_id}/toggle</code></td><td><span class="zh">启用/禁用路由。</span><span class="en">Toggle a route on/off.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">Caddy — 限流</span><span class="en">Caddy — rate limits</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits</code></td><td><span class="zh">创建限流规则。</span><span class="en">Create a rate-limit rule.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits</code></td><td><span class="zh">列出限流规则。</span><span class="en">List rate-limit rules.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits/statistics</code></td><td><span class="zh">限流统计。</span><span class="en">Rate-limit statistics.</span></td></tr>
+          <tr><td><code>GET</code> · <code>PUT</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits/{rule_id}</code></td><td><span class="zh">获取 / 更新 / 删除规则。</span><span class="en">Get / update / delete a rule.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits/{rule_id}/toggle</code></td><td><span class="zh">启用/禁用规则。</span><span class="en">Toggle a rule on/off.</span></td></tr>
+          <tr><td><code>POST</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits/{rule_id}/whitelist</code></td><td><span class="zh">增删白名单 IP。</span><span class="en">Add/remove whitelist IPs.</span></td></tr>
+          <tr><td><code>POST</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/caddy/rate-limits/{rule_id}/blacklist</code></td><td><span class="zh">增删黑名单 IP。</span><span class="en">Add/remove blacklist IPs.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">Caddy — 证书</span><span class="en">Caddy — certificates</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/certificates</code></td><td><span class="zh">注册新证书。</span><span class="en">Register a new certificate.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/certificates</code></td><td><span class="zh">列出证书。</span><span class="en">List certificates.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/certificates/expiring</code></td><td><span class="zh">列出即将过期的证书。</span><span class="en">List expiring certificates.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/certificates/statistics</code></td><td><span class="zh">证书统计。</span><span class="en">Certificate statistics.</span></td></tr>
+          <tr><td><code>GET</code> · <code>PUT</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/caddy/certificates/{cert_id}</code></td><td><span class="zh">获取 / 更新 / 删除证书。</span><span class="en">Get / update / delete a certificate.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/certificates/{cert_id}/renew</code></td><td><span class="zh">续订证书。</span><span class="en">Renew a certificate.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/certificates/{cert_id}/auto-renew</code></td><td><span class="zh">切换自动续订。</span><span class="en">Toggle auto-renew.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">Caddy — 统计</span><span class="en">Caddy — statistics</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/realtime/global</code></td><td><span class="zh">全局实时统计。</span><span class="en">Global realtime stats.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/realtime/service/{service_name}</code></td><td><span class="zh">单服务实时统计。</span><span class="en">Per-service realtime stats.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/trend/global</code></td><td><span class="zh">全局流量趋势。</span><span class="en">Global traffic trend.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/trend/service/{service_name}</code></td><td><span class="zh">单服务流量趋势。</span><span class="en">Per-service traffic trend.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/trend/route/{route_id}</code></td><td><span class="zh">单路由流量趋势。</span><span class="en">Per-route traffic trend.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/top/countries</code></td><td><span class="zh">访问量最高国家排名。</span><span class="en">Top countries by traffic.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/stats/top/ips</code></td><td><span class="zh">访问量最高 IP 排名。</span><span class="en">Top IPs by traffic.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/stats/cleanup</code></td><td><span class="zh">清理旧统计数据。</span><span class="en">Clean up old stats.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">Caddy — 访问日志</span><span class="en">Caddy — access logs</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/logs/search</code></td><td><span class="zh">搜索访问日志。</span><span class="en">Search access logs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/logs/security-events</code></td><td><span class="zh">安全事件日志。</span><span class="en">Security event logs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/logs/analysis/geographic</code></td><td><span class="zh">地理分布分析。</span><span class="en">Geographic distribution analysis.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/logs/analysis/status-codes</code></td><td><span class="zh">状态码分布分析。</span><span class="en">Status-code distribution analysis.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/logs/analysis/suspicious-ips</code></td><td><span class="zh">可疑 IP 检测。</span><span class="en">Suspicious-IP detection.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/caddy/logs/analysis/error-patterns</code></td><td><span class="zh">错误模式分析。</span><span class="en">Error-pattern analysis.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/caddy/logs/cleanup</code></td><td><span class="zh">清理旧访问日志。</span><span class="en">Clean up old access logs.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">数据库管理</span><span class="en">Database admin</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db/schema/apply</code></td><td><span class="zh">应用 schema 变更。</span><span class="en">Apply schema changes.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db/schema/diff</code></td><td><span class="zh">比对 schema 差异。</span><span class="en">Diff schema.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db/schema/rebuild</code></td><td><span class="zh">重建整个数据库。</span><span class="en">Rebuild the whole database.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db/schema/rebuild_tables</code></td><td><span class="zh">重建指定表。</span><span class="en">Rebuild specific tables.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db_init/initialize</code></td><td><span class="zh">初始化所有数据库。</span><span class="en">Initialize all databases.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/db_init/incremental</code></td><td><span class="zh">增量构建数据库。</span><span class="en">Incrementally build databases.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/db_init/status</code></td><td><span class="zh">数据库初始化状态。</span><span class="en">Database init status.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">工作流运维</span><span class="en">Workflow operations</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows</code></td><td><span class="zh">列出工作流。</span><span class="en">List workflows.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows</code></td><td><span class="zh">创建工作流。</span><span class="en">Create a workflow.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/stats</code></td><td><span class="zh">工作流统计。</span><span class="en">Workflow stats.</span></td></tr>
+          <tr><td><code>GET</code> · <code>PUT</code> · <code>DELETE</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}</code></td><td><span class="zh">获取 / 更新 / 删除工作流。</span><span class="en">Get / update / delete a workflow.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/toggle</code></td><td><span class="zh">启用/禁用工作流。</span><span class="en">Toggle a workflow on/off.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/duplicate</code></td><td><span class="zh">复制工作流。</span><span class="en">Duplicate a workflow.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/versions</code></td><td><span class="zh">列出版本。</span><span class="en">List versions.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/rollback</code></td><td><span class="zh">回滚版本。</span><span class="en">Roll back a version.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/publish</code></td><td><span class="zh">发布工作流。</span><span class="en">Publish a workflow.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/validate</code></td><td><span class="zh">校验工作流定义。</span><span class="en">Validate a workflow definition.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/{id:uuid}/trigger</code></td><td><span class="zh">触发一次运行。</span><span class="en">Trigger a run.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs</code></td><td><span class="zh">列出运行。</span><span class="en">List runs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs/{run_id}/graph</code></td><td><span class="zh">获取运行的图状态。</span><span class="en">Get a run's graph status.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/runs/{run_id}/nodes/{node_id}/logs</code></td><td><span class="zh">获取节点执行日志。</span><span class="en">Get a node's execution logs.</span></td></tr>
+          <tr><td><code>GET</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts</code></td><td><span class="zh">列出工作流告警。</span><span class="en">List workflow alerts.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts/{alert_id}/ack</code></td><td><span class="zh">确认告警。</span><span class="en">Acknowledge an alert.</span></td></tr>
+          <tr><td><code>POST</code></td><td><code>/v1/opsbffsrv/ops/workflows/alerts/{alert_id}/resolve</code></td><td><span class="zh">解决告警。</span><span class="en">Resolve an alert.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">可视化工具代理</span><span class="en">Visualization-tool proxies</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code> · <code>POST</code> · <code>PUT</code> · <code>DELETE</code> · <code>PATCH</code></td><td><code>/v1/opsbffsrv/pgweb/{path:path}</code></td><td><span class="zh">代理 pgweb（PostgreSQL 管理）。</span><span class="en">Proxy pgweb (PostgreSQL admin).</span></td></tr>
+          <tr><td><code>GET</code> · <code>POST</code> · <code>PUT</code> · <code>DELETE</code> · <code>PATCH</code></td><td><code>/v1/opsbffsrv/redis_commander/{path:path}</code></td><td><span class="zh">代理 redis-commander（Redis 管理）。</span><span class="en">Proxy redis-commander (Redis admin).</span></td></tr>
+          <tr><td><code>GET</code> · <code>POST</code> · <code>PUT</code> · <code>DELETE</code> · <code>PATCH</code></td><td><code>/v1/opsbffsrv/mongo_express/{path:path}</code></td><td><span class="zh">代理 mongo-express（MongoDB 管理）。</span><span class="en">Proxy mongo-express (MongoDB admin).</span></td></tr>
+          <tr><td><code>GET</code> · <code>POST</code> · <code>PUT</code> · <code>DELETE</code> · <code>PATCH</code></td><td><code>/v1/opsbffsrv/rabbitmq_mgmt/{path:path}</code></td><td><span class="zh">代理 RabbitMQ 管理控制台。</span><span class="en">Proxy the RabbitMQ management console.</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh">四个代理接口均同时提供无 <code>{path:path}</code> 的根路径 <code>GET</code> 入口；RabbitMQ 代理另有一个内部健康探针 <code>GET /v1/opsbffsrv/internal/health/rabbitmq_mgmt_login_bypass</code>。</span>
+        <span class="en">Each proxy also exposes a root <code>GET</code> entry without the <code>{path:path}</code> suffix; the RabbitMQ proxy additionally has an internal health probe at <code>GET /v1/opsbffsrv/internal/health/rabbitmq_mgmt_login_bypass</code>.</span>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="data-model.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">数据模型</span><span class="en">Data Model</span></span></a>
+      <a class="next" href="deployment.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">部署与安全</span><span class="en">Deployment &amp; Security</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

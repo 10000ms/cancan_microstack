@@ -1,0 +1,341 @@
+import http
+
+from linglong_web import BaseRoute
+from cancan_microstack.services.infrasrv.interface.api.service_config import (
+    get_service_config_handler,
+    insert_service_config_handler,
+    update_service_config_handler,
+    get_all_service_configs_handler,
+    delete_service_config_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.service_registry import (
+    register_service_handler,
+    deregister_service_handler,
+    get_service_instances_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.health_check_api import (
+    health_check_all_instances_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.internal import (
+    internal_trigger_config_push_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.service_logs_api import (
+    get_service_logs_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.hooks import (
+    get_hook_metrics_handler,
+    get_hook_history_handler,
+    get_hook_status_handler,
+    reset_hook_metrics_handler,
+    get_hook_performance_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.internal_operation_api import (
+    internal_create_operation_handler,
+    internal_update_operation_handler,
+    internal_get_operation_handler,
+    internal_list_operations_handler,
+    internal_check_timeouts_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.internal_instance_api import (
+    internal_create_instance_handler,
+    internal_update_instance_handler,
+    internal_delete_instance_handler,
+    internal_get_instance_handler,
+    internal_list_instances_handler,
+    internal_count_instances_handler,
+    internal_get_next_port_handler,
+    internal_update_service_replicas_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.service_management_api import (
+    start_service_handler,
+    stop_service_handler,
+    restart_service_handler,
+)
+from cancan_microstack.services.infrasrv.interface.api.workflow_api import (
+    create_workflow_handler,
+    list_workflows_handler,
+    get_workflow_handler,
+    list_runs_handler,
+    trigger_workflow_handler,
+    get_run_graph_status_handler,
+    get_node_history_handler,
+    external_callback_handler,
+    get_workflow_stats_handler,
+    update_workflow_handler,
+    delete_workflow_handler,
+    list_workflow_versions_handler,
+    rollback_workflow_handler,
+    list_engine_alerts_handler,
+    acknowledge_engine_alert_handler,
+    resolve_engine_alert_handler,
+)
+
+router_list = [
+    # Service Config routes - 配置管理接口
+    BaseRoute(
+        path="/v1/infrasrv/service_config",
+        method=http.HTTPMethod.GET,
+        handler=get_service_config_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service_configs",
+        method=http.HTTPMethod.GET,
+        handler=get_all_service_configs_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service_config",
+        method=http.HTTPMethod.POST,
+        handler=insert_service_config_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service_config",
+        method=http.HTTPMethod.PUT,
+        handler=update_service_config_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service_config",
+        method=http.HTTPMethod.DELETE,
+        handler=delete_service_config_handler,
+    ),
+
+    # Internal routes - 内部服务调用接口
+    BaseRoute(
+        path="/v1/infrasrv/internal/config/push",
+        method=http.HTTPMethod.POST,
+        handler=internal_trigger_config_push_handler,
+    ),
+
+    # Service Management routes - 服务管理接口（供 opsbffsrv 调用）
+    BaseRoute(
+        path="/v1/infrasrv/service/start",
+        method=http.HTTPMethod.POST,
+        handler=start_service_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service/stop",
+        method=http.HTTPMethod.POST,
+        handler=stop_service_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/service/restart",
+        method=http.HTTPMethod.POST,
+        handler=restart_service_handler,
+    ),
+
+    # Service Registry routes - 服务间通信接口
+    BaseRoute(
+        path="/v1/infrasrv/registry/register",
+        method=http.HTTPMethod.POST,
+        handler=register_service_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/registry/deregister",
+        method=http.HTTPMethod.DELETE,
+        handler=deregister_service_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/registry/instances",
+        method=http.HTTPMethod.GET,
+        handler=get_service_instances_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/health/check_instances",
+        method=http.HTTPMethod.POST,
+        handler=health_check_all_instances_handler,
+    ),
+
+    # Internal Operation Management routes - 操作管理内部接口（供 controllersrv 调用）
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/create",
+        method=http.HTTPMethod.POST,
+        handler=internal_create_operation_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/update",
+        method=http.HTTPMethod.POST,
+        handler=internal_update_operation_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/get",
+        method=http.HTTPMethod.GET,
+        handler=internal_get_operation_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/status",
+        method=http.HTTPMethod.GET,
+        handler=internal_get_operation_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/list",
+        method=http.HTTPMethod.GET,
+        handler=internal_list_operations_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/operation/check_timeouts",
+        method=http.HTTPMethod.GET,
+        handler=internal_check_timeouts_handler,
+    ),
+
+    # Internal Instance Management routes - 实例管理内部接口（供 controllersrv 调用）
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/create",
+        method=http.HTTPMethod.POST,
+        handler=internal_create_instance_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/update",
+        method=http.HTTPMethod.POST,
+        handler=internal_update_instance_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/delete",
+        method=http.HTTPMethod.POST,
+        handler=internal_delete_instance_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/get",
+        method=http.HTTPMethod.GET,
+        handler=internal_get_instance_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/list",
+        method=http.HTTPMethod.GET,
+        handler=internal_list_instances_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/count",
+        method=http.HTTPMethod.GET,
+        handler=internal_count_instances_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/instance/get_next_port",
+        method=http.HTTPMethod.GET,
+        handler=internal_get_next_port_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/internal/service_info/update_replicas",
+        method=http.HTTPMethod.POST,
+        handler=internal_update_service_replicas_handler,
+    ),
+
+    # Service Logs routes - 日志查询接口（供 opsbffsrv 调用）
+    BaseRoute(
+        path="/v1/infrasrv/service_logs",
+        method=http.HTTPMethod.GET,
+        handler=get_service_logs_handler,
+    ),
+
+    # Hook Monitoring routes - 钩子监控接口
+    BaseRoute(
+        path="/v1/infrasrv/hooks/metrics",
+        method=http.HTTPMethod.GET,
+        handler=get_hook_metrics_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/hooks/history",
+        method=http.HTTPMethod.GET,
+        handler=get_hook_history_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/hooks/status",
+        method=http.HTTPMethod.GET,
+        handler=get_hook_status_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/hooks/metrics/reset",
+        method=http.HTTPMethod.POST,
+        handler=reset_hook_metrics_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/hooks/metrics/reset",
+        method=http.HTTPMethod.POST,
+        handler=reset_hook_metrics_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/hooks/performance",
+        method=http.HTTPMethod.GET,
+        handler=get_hook_performance_handler,
+    ),
+
+    # Workflow routes
+    BaseRoute(
+        path="/v1/infrasrv/workflows",
+        method=http.HTTPMethod.POST,
+        handler=create_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows",
+        method=http.HTTPMethod.GET,
+        handler=list_workflows_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/stats",
+        method=http.HTTPMethod.GET,
+        handler=get_workflow_stats_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/alerts",
+        method=http.HTTPMethod.GET,
+        handler=list_engine_alerts_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/alerts/{alert_id}/ack",
+        method=http.HTTPMethod.POST,
+        handler=acknowledge_engine_alert_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/alerts/{alert_id}/resolve",
+        method=http.HTTPMethod.POST,
+        handler=resolve_engine_alert_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}",
+        method=http.HTTPMethod.GET,
+        handler=get_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}",
+        method=http.HTTPMethod.PUT,
+        handler=update_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}",
+        method=http.HTTPMethod.DELETE,
+        handler=delete_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}/versions",
+        method=http.HTTPMethod.GET,
+        handler=list_workflow_versions_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}/rollback",
+        method=http.HTTPMethod.POST,
+        handler=rollback_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/workflows/{workflow_id}/trigger",
+        method=http.HTTPMethod.POST,
+        handler=trigger_workflow_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/runs",
+        method=http.HTTPMethod.GET,
+        handler=list_runs_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/runs/{run_id}/status",
+        method=http.HTTPMethod.GET,
+        handler=get_run_graph_status_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/runs/{run_id}/nodes/{node_id}/history",
+        method=http.HTTPMethod.GET,
+        handler=get_node_history_handler,
+    ),
+    BaseRoute(
+        path="/v1/infrasrv/callbacks/{node_instance_id}",
+        method=http.HTTPMethod.POST,
+        handler=external_callback_handler,
+    ),
+]

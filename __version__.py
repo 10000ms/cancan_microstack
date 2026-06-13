@@ -1,0 +1,10 @@
+"""Cancan Microstack package metadata."""
+
+__title__ = "cancan-microstack"
+__description__ = "Infrastructure microservice bundle providing controllersrv/infrasrv/opsbffsrv, assets, and orchestration tooling"
+__url__ = "https://github.com/10000ms/cancan_microstack"
+__version__ = "0.0.1"
+__author__ = "Victor Lai"
+__author_email__ = "victor.lai@foxmail.com"
+__license__ = "MIT"
+__copyright__ = "2026 Victor Lai"

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作流引擎 · 概念与状态机 / Concepts & State Machine — Cancan Microstack</title>
+<meta name="description" content="The data model and state machine behind the Cancan Microstack workflow engine: definition, version snapshot, run, node instance, execution log, and how runs and nodes transition between states.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="wf-concepts">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">工作流引擎 · 概念与状态机</span><span class="en">Workflow Engine · Concepts & State Machine</span></h1>
+    <p class="page-lead">
+      <span class="zh">在写第一个工作流之前，先理解引擎赖以运转的五个对象——<strong>定义、版本、运行、节点、日志</strong>——以及它们如何在状态机里流转。这一层模型是后面节点、调度、API 三章的共同地基。</span>
+      <span class="en">Before authoring your first workflow, understand the five objects the engine is built on — <strong>definition, version, run, node, log</strong> — and how they move through their state machines. This model is the shared foundation for the nodes, scheduling and API chapters that follow.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#model"><span class="zh">分层概念模型</span><span class="en">Layered model</span></a>
+      <a href="#context"><span class="zh">执行上下文</span><span class="en">Execution context</span></a>
+      <a href="#state"><span class="zh">状态机</span><span class="en">State machines</span></a>
+      <a href="#suspend-retry"><span class="zh">挂起与重试</span><span class="en">Suspend & retry</span></a>
+      <a href="#versioning"><span class="zh">版本与快照</span><span class="en">Versioning & snapshots</span></a>
+    </div>
+
+    <section id="model">
+      <h2><span class="zh">分层概念模型</span><span class="en">The layered concept model</span></h2>
+      <p class="section-sub"><span class="zh">从"画出来的图"到"跑起来的实例"，引擎用五层对象把<strong>设计</strong>与<strong>运行</strong>彻底分开。</span><span class="en">From "the graph you draw" to "the instance that runs", the engine separates <strong>design</strong> from <strong>runtime</strong> with five layers of objects.</span></p>
+      <p>
+        <span class="zh">设计态只有两层：你<strong>编辑</strong>的工作流定义，以及每次保存时自动留存的<strong>版本快照</strong>。运行态有三层：一次<strong>运行实例</strong>、运行中产生的若干<strong>节点实例</strong>、以及每个节点每次尝试的<strong>执行日志</strong>。它们各自落在独立的存储表里，互不覆盖。</span>
+        <span class="en">The design side has two layers: the workflow definition you <strong>edit</strong>, and the <strong>version snapshot</strong> automatically kept on every save. The runtime side has three: a single <strong>run</strong>, the several <strong>node instances</strong> it spawns, and the <strong>execution log</strong> of every attempt of every node. Each lives in its own storage table and never overwrites another.</span>
+      </p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">对象</span><span class="en">Object</span></th>
+          <th><span class="zh">含义</span><span class="en">Meaning</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+          <th><span class="zh">存储表</span><span class="en">Storage table</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>WorkflowDefinition</code><br><span class="zh">定义</span><span class="en">Definition</span></td>
+            <td><span class="zh">可编辑的工作流蓝图：节点配置、连线、全局上下文与 Cron 调度。当前最新的"活"版本。</span><span class="en">The editable blueprint: node config, edges, global context and a Cron schedule. The current live version.</span></td>
+            <td><code>nodes_config</code> · <code>graph_data</code> · <code>global_context</code> · <code>schedule</code> · <code>version</code> · <code>is_active</code></td>
+            <td><code>workflow_definition_tbl</code></td>
+          </tr>
+          <tr>
+            <td><code>WorkflowDefinitionVersion</code><br><span class="zh">版本快照</span><span class="en">Version snapshot</span></td>
+            <td><span class="zh">每次保存（创建 / 更新 / 回滚）自动留存的只读历史版本，可据此回滚。</span><span class="en">A read-only historical version saved automatically on every create / update / rollback, used to roll back.</span></td>
+            <td><code>workflow_id</code> · <code>version</code> · <code>nodes_config</code> · <code>global_context</code> · <code>change_summary</code></td>
+            <td><code>workflow_definition_version_tbl</code></td>
+          </tr>
+          <tr>
+            <td><code>WorkflowRun</code><br><span class="zh">运行实例</span><span class="en">Run</span></td>
+            <td><span class="zh">一次具体执行：绑定触发方式、触发上下文，以及触发瞬间的<strong>定义快照</strong>。</span><span class="en">One concrete execution: bound to a trigger type, a trigger context, and a <strong>definition snapshot</strong> taken at trigger time.</span></td>
+            <td><code>status</code> · <code>trigger_type</code> · <code>trigger_context</code> · <code>global_context</code> · <code>definition_snapshot</code> · <code>reqid</code></td>
+            <td><code>workflow_run_tbl</code></td>
+          </tr>
+          <tr>
+            <td><code>NodeInstance</code><br><span class="zh">节点实例</span><span class="en">Node instance</span></td>
+            <td><span class="zh">运行中某节点的一次执行；同一节点在循环里会有多个实例，用 <code>loop_index</code> 区分。</span><span class="en">One execution of a node within a run; in a loop the same node has several instances, distinguished by <code>loop_index</code>.</span></td>
+            <td><code>node_id</code> · <code>loop_index</code> · <code>status</code> · <code>final_output</code> · <code>attempt_count</code> · <code>error_msg</code></td>
+            <td><code>node_instance_tbl</code></td>
+          </tr>
+          <tr>
+            <td><code>ExecutionLog</code><br><span class="zh">执行日志</span><span class="en">Execution log</span></td>
+            <td><span class="zh">某个节点实例某一次尝试的请求 / 响应快照与耗时，用于审计与排障。</span><span class="en">The request / response snapshot and timing of one attempt of one node instance — for audit and debugging.</span></td>
+            <td><code>node_instance_id</code> · <code>attempt_no</code> · <code>status</code> · <code>request_snapshot</code> · <code>response_snapshot</code> · <code>duration_ms</code></td>
+            <td><code>execution_log_tbl</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>一句话记住层级。</strong>一个 <em>定义</em> 有多个 <em>版本</em>；一次触发产生一个 <em>运行</em>；一个运行展开成多个 <em>节点实例</em>；每个节点实例的每次尝试写一条 <em>执行日志</em>。越往下越细，越往下越多。</span>
+        <span class="en"><strong>The hierarchy in one line.</strong> One <em>definition</em> has many <em>versions</em>; one trigger creates one <em>run</em>; one run unfolds into many <em>node instances</em>; each attempt of each instance writes one <em>execution log</em>. The deeper you go, the finer and more numerous.</span>
+      </div>
+    </section>
+
+    <section id="context">
+      <h2><span class="zh">执行上下文：节点之间传数据</span><span class="en">Execution context: passing data between nodes</span></h2>
+      <p class="section-sub"><span class="zh"><code>WorkflowExecutionContext</code> 是节点处理器拿到的唯一入参，承载整条运行的状态。</span><span class="en"><code>WorkflowExecutionContext</code> is the single argument every node handler receives — it carries the state of the whole run.</span></p>
+      <p>
+        <span class="zh">每个节点执行时，应用层会从运行实例重建一份执行上下文交给领域引擎。节点读它取输入、写 <code>global_context</code> 留输出，下游节点再读到。其中 <code>global_context.__runtime__</code> 是引擎保留的运行时命名空间，节点自己不要往里写。</span>
+        <span class="en">When a node runs, the application layer rebuilds an execution context from the run and hands it to the domain engine. A node reads it for inputs and writes <code>global_context</code> for outputs, which downstream nodes then read. Within it, <code>global_context.__runtime__</code> is a runtime namespace reserved by the engine — nodes should never write into it directly.</span>
+      </p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">字段</span><span class="en">Field</span></th>
+          <th><span class="zh">类型</span><span class="en">Type</span></th>
+          <th><span class="zh">作用</span><span class="en">Purpose</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>run_id</code></td><td>UUID</td><td><span class="zh">所属运行实例，节点结果按它落库。</span><span class="en">The owning run; node results are persisted against it.</span></td></tr>
+          <tr><td><code>global_context</code></td><td>dict</td><td><span class="zh">跨节点共享的业务数据袋；内含引擎保留的 <code>__runtime__</code> 命名空间。</span><span class="en">The cross-node business data bag; contains the engine-reserved <code>__runtime__</code> namespace.</span></td></tr>
+          <tr><td><code>nodes</code></td><td>dict[str, NodeOutput]</td><td><span class="zh">已执行节点的输出与状态映射，供 JOIN 等节点查上游。</span><span class="en">A map of executed nodes' outputs and statuses — JOIN and friends inspect upstream here.</span></td></tr>
+          <tr><td><code>loop_index</code></td><td>int</td><td><span class="zh">当前循环轮次（默认 1）；同一节点在循环里靠它区分实例。</span><span class="en">The current loop iteration (default 1); distinguishes instances of the same node inside a loop.</span></td></tr>
+          <tr><td><code>callback_url</code></td><td>str | None</td><td><span class="zh">仅当 ACTION 节点 <code>async_mode</code> 为真时注入，外部系统据此回调以恢复挂起节点。</span><span class="en">Injected only when an ACTION node has <code>async_mode</code> on; external systems call it back to resume the suspended node.</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">每当一个节点执行完成，应用层会把结果写进 <code>__runtime__</code>：累积每个节点的输出（<code>node_outputs</code>），并刷新 <code>last_node_id</code> / <code>last_output</code> / <code>last_status</code> 三个"上一节点"快捷键，供后续节点的模板表达式直接引用。</span>
+        <span class="en">As each node finishes, the application layer writes the result into <code>__runtime__</code>: it accumulates every node's output (<code>node_outputs</code>) and refreshes the three "last node" shortcuts <code>last_node_id</code> / <code>last_output</code> / <code>last_status</code>, which later nodes' template expressions reference directly.</span>
+      </p>
+    </section>
+
+    <section id="state">
+      <h2><span class="zh">两台状态机</span><span class="en">Two state machines</span></h2>
+      <p class="section-sub"><span class="zh">运行有运行的生命周期，节点有节点的生命周期——前者是后者的汇总结果。</span><span class="en">A run has its own lifecycle and a node has its own — the former is an aggregate of the latter.</span></p>
+
+      <h3><span class="zh">运行状态 WorkflowStatus</span><span class="en">Run status — WorkflowStatus</span></h3>
+      <p>
+        <span class="zh">运行从 <code>PENDING</code> 创建，派发首节点后转 <code>RUNNING</code>，最终落到四种终态之一。<code>END</code> 节点成功即整条运行 <code>SUCCESS</code>；任一节点失败则运行 <code>FAILURE</code>。</span>
+        <span class="en">A run is created as <code>PENDING</code>, turns <code>RUNNING</code> once the first node is dispatched, and finally settles into one of four terminal states. A successful <code>END</code> node marks the whole run <code>SUCCESS</code>; any failing node marks it <code>FAILURE</code>.</span>
+      </p>
+      <pre><code><span class="tok-c"># 运行状态流转 / Run state transitions</span>
+PENDING ──<span class="tok-k">dispatch first node</span>──&gt; RUNNING
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        ▼            ▼             ▼             ▼
+     SUCCESS      FAILURE      CANCELLED       PAUSED
+   <span class="tok-c">(END ok)</span>   <span class="tok-c">(node fail)</span>  <span class="tok-c">(cancelled)</span>   <span class="tok-c">(paused)</span></code></pre>
+      <table>
+        <thead><tr><th><span class="zh">状态</span><span class="en">State</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>PENDING</code></td><td><span class="zh">运行已创建，尚未派发任何节点。</span><span class="en">Run created, no node dispatched yet.</span></td></tr>
+          <tr><td><code>RUNNING</code></td><td><span class="zh">至少一个节点已被派发，流程进行中。</span><span class="en">At least one node dispatched; execution in progress.</span></td></tr>
+          <tr><td><code>SUCCESS</code></td><td><span class="zh">终态：<code>END</code> 节点以 <code>SUCCESS</code> 收尾。</span><span class="en">Terminal: an <code>END</code> node finished with <code>SUCCESS</code>.</span></td></tr>
+          <tr><td><code>FAILURE</code></td><td><span class="zh">终态：某节点失败，或编排断点（成功节点却无下游）被守护逻辑判定为失败。</span><span class="en">Terminal: a node failed, or an orchestration dead-end (a successful node with no downstream) was failed by the guard.</span></td></tr>
+          <tr><td><code>CANCELLED</code></td><td><span class="zh">终态：流程被取消，后续节点不再执行。</span><span class="en">Terminal: the run was cancelled; remaining nodes do not run.</span></td></tr>
+          <tr><td><code>PAUSED</code></td><td><span class="zh">暂停态，等待人工或外部恢复。</span><span class="en">Paused, awaiting manual or external resumption.</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">节点状态 NodeStatus</span><span class="en">Node status — NodeStatus</span></h3>
+      <p>
+        <span class="zh">节点实例从 <code>PENDING</code> 进入 <code>RUNNING</code>，正常结束为 <code>SUCCESS</code> 或 <code>FAILURE</code>；分支未走到的节点为 <code>SKIPPED</code>；ACTION 异步节点进 <code>SUSPENDED</code> 等回调；带重试的节点在尝试间处于 <code>RETRYING</code>；随流程取消的节点为 <code>CANCELLED</code>。</span>
+        <span class="en">A node instance moves from <code>PENDING</code> to <code>RUNNING</code>, ending normally as <code>SUCCESS</code> or <code>FAILURE</code>; branches not taken become <code>SKIPPED</code>; async ACTION nodes enter <code>SUSPENDED</code> awaiting a callback; nodes with retries sit in <code>RETRYING</code> between attempts; nodes cancelled with the run become <code>CANCELLED</code>.</span>
+      </p>
+      <pre><code><span class="tok-c"># 节点状态流转 / Node state transitions</span>
+PENDING ──&gt; RUNNING ──┬──&gt; SUCCESS
+                      ├──&gt; FAILURE
+                      ├──&gt; SKIPPED     <span class="tok-c"># 分支未选中 / branch not taken</span>
+                      ├──&gt; SUSPENDED ──<span class="tok-k">callback</span>──&gt; SUCCESS   <span class="tok-c"># ACTION async_mode</span>
+                      ├──&gt; RETRYING  ──<span class="tok-k">re-attempt</span>──&gt; RUNNING   <span class="tok-c"># attempt_count++</span>
+                      └──&gt; CANCELLED   <span class="tok-c"># 跟随流程取消 / cancelled with run</span></code></pre>
+    </section>
+
+    <section id="suspend-retry">
+      <h2><span class="zh">两个特殊节点状态</span><span class="en">Two special node states</span></h2>
+      <p class="section-sub"><span class="zh"><code>SUSPENDED</code> 与 <code>RETRYING</code> 是引擎"异步等待"和"自愈重试"能力的状态投影。</span><span class="en"><code>SUSPENDED</code> and <code>RETRYING</code> are the state projections of the engine's "async wait" and "self-healing retry" capabilities.</span></p>
+      <div class="grid">
+        <div class="card">
+          <span class="ic">⏸️</span>
+          <h4><code>SUSPENDED</code> — <span class="zh">等待外部回调</span><span class="en">Awaiting external callback</span></h4>
+          <p><span class="zh">当 ACTION 节点配置 <code>async_mode=true</code>，引擎发出请求后<strong>不等结果</strong>，把节点置为 <code>SUSPENDED</code> 并在请求头注入 <code>X-Callback-Url</code>。外部系统处理完毕后回调该地址，应用层据此把节点改为 <code>SUCCESS</code> 并派发下游。适合长耗时、异步审批类外部交互。</span><span class="en">When an ACTION node sets <code>async_mode=true</code>, the engine fires the request but <strong>does not wait</strong> for the result: it marks the node <code>SUSPENDED</code> and injects <code>X-Callback-Url</code> into the request headers. Once the external system finishes, it calls that URL back; the application layer then flips the node to <code>SUCCESS</code> and dispatches downstream. Ideal for long-running or async-approval interactions.</span></p>
+        </div>
+        <div class="card">
+          <span class="ic">🔁</span>
+          <h4><code>RETRYING</code> — <span class="zh">重试中</span><span class="en">Retrying</span></h4>
+          <p><span class="zh">节点配置可带重试策略（最大尝试次数、间隔、按响应码重试）。每一次尝试都会让节点实例的 <code>attempt_count</code> 自增，并各写一条 <code>ExecutionLog</code>（<code>attempt_no</code> 递增），便于看清"第几次才成功"。重试窗口内节点处于 <code>RETRYING</code>。</span><span class="en">A node may carry a retry policy (max attempts, interval, retry-on-status). Each attempt increments the node instance's <code>attempt_count</code> and writes its own <code>ExecutionLog</code> (with an increasing <code>attempt_no</code>), so you can see "which attempt finally succeeded". During the retry window the node sits in <code>RETRYING</code>.</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="versioning" style="border-bottom:none">
+      <h2><span class="zh">版本与快照：让运行结果可复现</span><span class="en">Versioning & snapshots: reproducible runs</span></h2>
+      <p class="section-sub"><span class="zh">定义会被持续编辑，但已经在跑的运行必须"看到"触发那一刻的样子。</span><span class="en">Definitions keep changing, but a running execution must "see" the definition exactly as it was at trigger time.</span></p>
+      <p>
+        <span class="zh">引擎用两道机制保证这一点：</span>
+        <span class="en">The engine guarantees this with two mechanisms:</span>
+      </p>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">保存即建版本快照</span><span class="en">Save creates a version snapshot</span></h4>
+          <p><span class="zh">创建、更新、回滚工作流定义时，都会向 <code>workflow_definition_version_tbl</code> 追加一条只读快照，并把 <code>version</code> 号自增。每条快照带 <code>change_summary</code>（如 "Initial version" / "Definition updated" / "Rollback to v3"），形成可追溯的演进历史。</span><span class="en">Creating, updating or rolling back a definition appends a read-only snapshot to <code>workflow_definition_version_tbl</code> and bumps the <code>version</code> number. Each snapshot carries a <code>change_summary</code> (e.g. "Initial version" / "Definition updated" / "Rollback to v3"), forming a traceable evolution history.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">运行绑定定义快照</span><span class="en">Runs bind a definition snapshot</span></h4>
+          <p><span class="zh">触发时，应用层把当前定义整体序列化进运行实例的 <code>definition_snapshot</code> 字段，并记下 <code>definition_version</code>。此后该运行的所有节点都从这份快照取配置——即使有人在运行途中改了或删了定义，正在跑的流程也<strong>不受影响</strong>。</span><span class="en">At trigger time the application layer serializes the whole current definition into the run's <code>definition_snapshot</code> field and records <code>definition_version</code>. From then on every node of that run reads its config from this snapshot — so even if someone edits or deletes the definition mid-run, the in-flight execution is <strong>unaffected</strong>.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">回滚恢复历史版本</span><span class="en">Rollback restores a historical version</span></h4>
+          <p><span class="zh">回滚时，引擎从目标版本快照取出 <code>nodes_config</code> + <code>global_context</code>（连同 name / schedule / graph_data 等）写回定义，并<strong>再生成一条新版本</strong>记录这次回滚——历史只增不删。整个回滚在分布式锁内进行，避免与并发更新打架。</span><span class="en">On rollback the engine restores <code>nodes_config</code> + <code>global_context</code> (along with name / schedule / graph_data) from the target version snapshot back into the definition, and <strong>creates yet another new version</strong> recording the rollback — history only ever grows. The whole rollback runs inside a distributed lock to avoid racing concurrent updates.</span></p>
+        </li>
+      </ol>
+      <div class="note">
+        <span class="zh"><strong>设计 / 运行解耦的回报。</strong>因为运行携带自己的定义快照，你可以放心地一边运营线上工作流、一边迭代下一版——两者互不打扰。版本号则让"它当时到底跑的是哪一版"永远有答案。</span>
+        <span class="en"><strong>The payoff of decoupling design from runtime.</strong> Because a run carries its own definition snapshot, you can safely operate live workflows while iterating the next version — neither disturbs the other. The version number means "which version did it actually run?" always has an answer.</span>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="service-opsbffsrv.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl">opsbffsrv</span></a>
+      <a class="next" href="workflow-nodes.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">节点类型</span><span class="en">Node Types</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日志管道 / Logging Pipeline — Cancan Microstack</title>
+<meta name="description" content="The logging pipeline: application logs are shipped over a RabbitMQ topic exchange, ingested by infrasrv into MongoDB, and queried back through opsbffsrv.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="logging">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">日志管道</span><span class="en">Logging Pipeline</span></h1>
+    <p class="page-lead">
+      <span class="zh">应用日志经 RabbitMQ 采集进 MongoDB，再由 <code>opsbffsrv</code> 检索——一条"日志即消息"的异步管道，应用侧只挂一个 <code>logging.Handler</code> 即可接入。</span>
+      <span class="en">Application logs are collected over RabbitMQ into MongoDB, then queried back through <code>opsbffsrv</code> — a "logs as messages" async pipeline that an app joins by attaching a single <code>logging.Handler</code>.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#pipeline"><span class="zh">整条链路</span><span class="en">The pipeline</span></a>
+      <a href="#handler"><span class="zh">RabbitMQHandler</span><span class="en">RabbitMQHandler</span></a>
+      <a href="#event"><span class="zh">日志事件模型</span><span class="en">Event model</span></a>
+      <a href="#storage"><span class="zh">MongoDB 存储</span><span class="en">MongoDB storage</span></a>
+      <a href="#query"><span class="zh">查询 API</span><span class="en">Query API</span></a>
+      <a href="#config"><span class="zh">配置项</span><span class="en">Config keys</span></a>
+    </div>
+
+    <section id="pipeline">
+      <h2><span class="zh">整条链路</span><span class="en">The end-to-end pipeline</span></h2>
+      <p class="section-sub"><span class="zh">采集（生产者）与入库（消费者）解耦在一个 RabbitMQ topic 交换机两侧。</span><span class="en">Collection (producer) and ingestion (consumer) are decoupled across a RabbitMQ topic exchange.</span></p>
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box"><div class="t"><span class="zh">应用日志</span><span class="en">App log</span></div><div class="d">logging.LogRecord</div></div>
+        </div>
+        <div class="arch-arrow">▼</div>
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">RabbitMQHandler</div><div class="d">public/logging/mq_handler</div></div>
+        </div>
+        <div class="arch-arrow">▼ <span class="zh">发布，routing key</span><span class="en">publish, routing key</span> <code>logs.business.{service}.{level}</code></div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t"><span class="zh">RabbitMQ topic 交换机</span><span class="en">RabbitMQ topic exchange</span></div><div class="d">logs.topic.exchange</div></div>
+        </div>
+        <div class="arch-arrow">▼ <span class="zh">绑定</span><span class="en">binding</span> <code>logs.business.#</code></div>
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">LogIngestionService</div><div class="d"><span class="zh">infrasrv 消费者</span><span class="en">infrasrv consumer</span></div></div>
+        </div>
+        <div class="arch-arrow">▼</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">MongoDB</div><div class="d">infra_logging.service_logs</div></div>
+        </div>
+        <div class="arch-arrow">▼ <span class="zh">查询</span><span class="en">query</span></div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">opsbffsrv</div><div class="d">logs/search · service_logs</div></div>
+        </div>
+      </div>
+      <p>
+        <span class="zh">交换机是 <strong>topic</strong> 类型。生产者按模板 <code>logs.business.{service}.{level}</code> 生成 routing key（<code>{level}</code> 取小写，如 <code>logs.business.myservice.info</code>）；infrasrv 的消费队列用通配 <code>logs.business.#</code> 绑定，因此能收下所有服务、所有级别的日志。生产与消费两端彻底解耦——应用不阻塞、不直连 Mongo。</span>
+        <span class="en">The exchange is a <strong>topic</strong> exchange. The producer builds the routing key from the template <code>logs.business.{service}.{level}</code> (<code>{level}</code> lowercased, e.g. <code>logs.business.myservice.info</code>); infrasrv's consumer queue binds with the wildcard <code>logs.business.#</code>, so it receives logs from every service at every level. Producer and consumer are fully decoupled — the app never blocks and never talks to Mongo directly.</span>
+      </p>
+    </section>
+
+    <section id="handler">
+      <h2><span class="zh">RabbitMQHandler 配置</span><span class="en">RabbitMQHandler configuration</span></h2>
+      <p class="section-sub"><span class="zh">它是标准 <code>logging.Handler</code> 子类——把每条 <code>LogRecord</code> 编码成日志事件后发布到交换机。</span><span class="en">A standard <code>logging.Handler</code> subclass — it encodes each <code>LogRecord</code> into a log event and publishes it to the exchange.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">参数</span><span class="en">Parameter</span></th><th><span class="zh">含义 / 默认</span><span class="en">Meaning / default</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>connection</code></td><td><span class="zh">aio-pika 的 RabbitMQ 连接实例（必填）</span><span class="en">aio-pika RabbitMQ connection (required)</span></td></tr>
+          <tr><td><code>service_name</code></td><td><span class="zh">当前服务名，用于拼 routing key（必填）</span><span class="en">Current service name, used to build the routing key (required)</span></td></tr>
+          <tr><td><code>exchange_name</code></td><td><span class="zh">发布目标交换机名（必填）</span><span class="en">Target exchange name (required)</span></td></tr>
+          <tr><td><code>routing_template</code></td><td><span class="zh">routing key 模板，默认 <code>log.{service}.{level}</code>，由配置覆盖为 <code>logs.business.{service}.{level}</code></span><span class="en">Routing-key template; built-in default <code>log.{service}.{level}</code>, overridden by config to <code>logs.business.{service}.{level}</code></span></td></tr>
+          <tr><td><code>instance_id</code></td><td><span class="zh">实例 ID；缺省时用 <code>nanoid</code>（12 位）自动生成</span><span class="en">Instance ID; auto-generated via <code>nanoid</code> (12 chars) when omitted</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">发布时它把 <code>LogRecord</code> 构造成一个 <code>LogEventCreate</code>，用 <code>orjson</code> 序列化，包成 <strong>持久化（PERSISTENT）</strong>消息、JSON 内容类型，再以上面的 routing key 发布到交换机。</span>
+        <span class="en">On publish it constructs a <code>LogEventCreate</code> from the <code>LogRecord</code>, serializes it with <code>orjson</code>, wraps it as a <strong>PERSISTENT</strong> message with a JSON content type, and publishes it to the exchange under the routing key above.</span>
+      </p>
+    </section>
+
+    <section id="event">
+      <h2><span class="zh">日志事件模型 LogEventCreate</span><span class="en">Event model: LogEventCreate</span></h2>
+      <p class="section-sub"><span class="zh">链路上传输的标准载荷，字段足够定位"哪台实例、哪个文件第几行、什么级别、属于哪条 trace"。</span><span class="en">The standard payload on the wire — fields enough to pinpoint "which instance, which file and line, what level, which trace".</span></p>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Field</span></th><th><span class="zh">类型</span><span class="en">Type</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>event_id</code></td><td>str</td><td><span class="zh">日志事件唯一 ID</span><span class="en">Unique event ID</span></td></tr>
+          <tr><td><code>service_name</code></td><td>str</td><td><span class="zh">来源服务名</span><span class="en">Source service name</span></td></tr>
+          <tr><td><code>instance_id</code></td><td>str</td><td><span class="zh">来源实例 ID</span><span class="en">Source instance ID</span></td></tr>
+          <tr><td><code>level</code></td><td>enum</td><td><span class="zh">级别：DEBUG / INFO / WARNING / ERROR / CRITICAL</span><span class="en">Level: DEBUG / INFO / WARNING / ERROR / CRITICAL</span></td></tr>
+          <tr><td><code>message</code></td><td>str</td><td><span class="zh">日志正文</span><span class="en">Log message body</span></td></tr>
+          <tr><td><code>timestamp</code></td><td>datetime</td><td><span class="zh">UTC 时间戳</span><span class="en">UTC timestamp</span></td></tr>
+          <tr><td><code>ip</code> / <code>host</code></td><td>str</td><td><span class="zh">实例 IP / 主机名</span><span class="en">Instance IP / hostname</span></td></tr>
+          <tr><td><code>logger_name</code></td><td>str</td><td><span class="zh">logger 名</span><span class="en">Logger name</span></td></tr>
+          <tr><td><code>file</code> / <code>line_no</code> / <code>func_name</code></td><td>str / int / str</td><td><span class="zh">源文件 / 行号 / 函数名</span><span class="en">Source file / line number / function name</span></td></tr>
+          <tr><td><code>trace_id</code></td><td>str</td><td><span class="zh">请求 / 链路追踪 ID</span><span class="en">Request / chain trace ID</span></td></tr>
+          <tr><td><code>metadata</code></td><td>dict</td><td><span class="zh">附加元数据（默认空字典）</span><span class="en">Extra metadata (defaults to empty dict)</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="storage">
+      <h2><span class="zh">MongoDB 存储</span><span class="en">MongoDB storage</span></h2>
+      <p class="section-sub"><span class="zh">入库为 <code>LogEventDocument</code>，存到 <code>infra_logging</code> 库的 <code>service_logs</code> 集合。</span><span class="en">Ingested as <code>LogEventDocument</code> into the <code>service_logs</code> collection of the <code>infra_logging</code> database.</span></p>
+      <p>
+        <span class="zh"><code>LogEventDocument</code> 在 <code>LogEventCreate</code> 全部字段之上多两个：<code>metadata_flattened</code>（把 metadata 拍平为字符串列表，供全文检索）与 <code>created_at</code>（入库时间）。集合上建有这些索引：<code>(service_name, timestamp↓)</code>、<code>(level, timestamp↓)</code>、<code>(ip, timestamp↓)</code>、<code>(func_name, timestamp↓)</code>，以及在 <code>(message, metadata_flattened)</code> 上的全文索引。</span>
+        <span class="en"><code>LogEventDocument</code> adds two fields on top of all <code>LogEventCreate</code> fields: <code>metadata_flattened</code> (metadata flattened into a string list for full-text search) and <code>created_at</code> (ingestion time). The collection carries these indexes: <code>(service_name, timestamp↓)</code>, <code>(level, timestamp↓)</code>, <code>(ip, timestamp↓)</code>, <code>(func_name, timestamp↓)</code>, plus a text index on <code>(message, metadata_flattened)</code>.</span>
+      </p>
+      <div class="note">
+        <span class="zh"><strong>过期是调度清理，不是 TTL 索引。</strong>当前实现没有给集合挂 <code>expireAfterSeconds</code> 的 TTL 索引，而是由 infrasrv 的定时任务按 <code>LOG_RETENTION_DAYS</code>（默认 7 天）批量删除过期日志，每批上限由 <code>LOG_RETENTION_BATCH_LIMIT</code>（默认 2000）控制。效果同样是"自动过期"，只是落在应用层调度。</span>
+        <span class="en"><strong>Expiry is scheduled cleanup, not a TTL index.</strong> The current implementation attaches no <code>expireAfterSeconds</code> TTL index; instead an infrasrv scheduled task batch-deletes expired logs by <code>LOG_RETENTION_DAYS</code> (default 7), each batch capped by <code>LOG_RETENTION_BATCH_LIMIT</code> (default 2000). The net effect is still automatic expiry, just driven at the application layer.</span>
+      </div>
+    </section>
+
+    <section id="query">
+      <h2><span class="zh">查询 API</span><span class="en">Query API</span></h2>
+      <p class="section-sub"><span class="zh">两类日志走两个接口：业务日志查 MongoDB 管道，服务日志查 PostgreSQL 动作记录。</span><span class="en">Two log kinds, two endpoints: business logs query the MongoDB pipeline, service logs query PostgreSQL action records.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">查什么 / 参数</span><span class="en">What / params</span></th></tr></thead>
+        <tbody>
+          <tr>
+            <td>POST</td><td><code>/v1/opsbffsrv/logs/search</code></td>
+            <td><span class="zh"><strong>业务日志</strong>（MongoDB）。必填 <code>service_names</code> + <code>start_time</code> + <code>end_time</code>；可选 <code>levels</code> / <code>keywords</code>（全文）/ <code>method_names</code> / <code>ip_addresses</code> / <code>instance_ids</code>；分页 <code>page</code> / <code>page_size</code>（默认 100，≤500）。返回 items / total / has_next。</span><span class="en"><strong>Business logs</strong> (MongoDB). Required <code>service_names</code> + <code>start_time</code> + <code>end_time</code>; optional <code>levels</code> / <code>keywords</code> (full-text) / <code>method_names</code> / <code>ip_addresses</code> / <code>instance_ids</code>; paged by <code>page</code> / <code>page_size</code> (default 100, ≤500). Returns items / total / has_next.</span></td>
+          </tr>
+          <tr>
+            <td>GET</td><td><code>/v1/opsbffsrv/service_logs</code><br><code>/v1/opsbffsrv/service_logs/by_service</code></td>
+            <td><span class="zh"><strong>服务日志</strong>（PostgreSQL 动作记录，如启停 / 重启）。可选 <code>service_name</code> / <code>action_type</code> / <code>action_status</code>；<code>limit</code> 1–1000（默认 100）。</span><span class="en"><strong>Service logs</strong> (PostgreSQL action records, e.g. start / stop / restart). Optional <code>service_name</code> / <code>action_type</code> / <code>action_status</code>; <code>limit</code> 1–1000 (default 100).</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>查询时间窗有上限。</strong>业务日志检索受 <code>LOG_QUERY_MAX_RANGE_DAYS</code>（默认 7 天）约束，避免一次拉穿大表。这正是前端 <code>LogSearch</code> 页背后的接口。</span>
+        <span class="en"><strong>Query windows are bounded.</strong> Business-log search is constrained by <code>LOG_QUERY_MAX_RANGE_DAYS</code> (default 7 days) to avoid scanning the whole table at once. This is exactly the endpoint behind the frontend <code>LogSearch</code> screen.</span>
+      </div>
+    </section>
+
+    <section id="config" style="border-bottom:none">
+      <h2><span class="zh">配置项</span><span class="en">Config keys</span></h2>
+      <p class="section-sub"><span class="zh">生产侧、消费侧与交换机 / 队列绑定都由配置项控制。</span><span class="en">Producer side, consumer side, and exchange / queue binding are all controlled by config keys.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">配置项</span><span class="en">Key</span></th><th><span class="zh">默认</span><span class="en">Default</span></th><th><span class="zh">作用</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>LOG_PIPELINE_ENABLED</code></td><td>None</td><td><span class="zh">生产侧总开关：是否挂 RabbitMQHandler 把日志发往 MQ</span><span class="en">Producer master switch: whether to attach RabbitMQHandler and ship logs to MQ</span></td></tr>
+          <tr><td><code>LOG_PIPELINE_CONSUMER_ENABLED</code></td><td>True</td><td><span class="zh">消费侧开关：infrasrv 是否启动入库消费者</span><span class="en">Consumer switch: whether infrasrv starts the ingestion consumer</span></td></tr>
+          <tr><td><code>RABBITMQ_LOG_EXCHANGE</code></td><td><code>logs.topic.exchange</code></td><td><span class="zh">日志 topic 交换机名</span><span class="en">Log topic-exchange name</span></td></tr>
+          <tr><td><code>RABBITMQ_LOG_QUEUE</code></td><td><code>logs.business.infra.q</code></td><td><span class="zh">infrasrv 入库队列名</span><span class="en">infrasrv ingestion queue name</span></td></tr>
+          <tr><td><code>RABBITMQ_LOG_BINDING_KEY</code></td><td><code>logs.business.#</code></td><td><span class="zh">队列绑定通配，收下所有服务 / 级别</span><span class="en">Queue binding wildcard, catching all services / levels</span></td></tr>
+          <tr><td><code>RABBITMQ_LOG_PREFETCH</code></td><td>200</td><td><span class="zh">消费者 QoS 预取数</span><span class="en">Consumer QoS prefetch count</span></td></tr>
+          <tr><td><code>RABBITMQ_LOG_ROUTING_TEMPLATE</code></td><td><code>logs.business.{service}.{level}</code></td><td><span class="zh">生产侧拼 routing key 的模板</span><span class="en">Template for producer-side routing keys</span></td></tr>
+        </tbody>
+      </table>
+      <p class="muted"><span class="zh">相关：<code>LOG_RETENTION_DAYS</code>（默认 7）/ <code>LOG_RETENTION_BATCH_LIMIT</code>（默认 2000）控制清理；<code>LOG_QUERY_MAX_RANGE_DAYS</code>（默认 7）约束查询时间窗。</span><span class="en">Related: <code>LOG_RETENTION_DAYS</code> (default 7) / <code>LOG_RETENTION_BATCH_LIMIT</code> (default 2000) govern cleanup; <code>LOG_QUERY_MAX_RANGE_DAYS</code> (default 7) bounds the query window.</span></p>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="registry-health.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">注册与健康</span><span class="en">Registry &amp; Health</span></span></a>
+      <a class="next" href="data-model.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">数据模型</span><span class="en">Data Model</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

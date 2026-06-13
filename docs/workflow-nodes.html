@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作流引擎 · 节点类型 / Node Types — Cancan Microstack</title>
+<meta name="description" content="The 8 node types of the Cancan Microstack workflow engine — START, ACTION, TRANSFORM, LOGIC, FORK, JOIN, LOOP, END — with their handlers, configuration and outputs.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="wf-nodes">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">工作流引擎 · 节点类型</span><span class="en">Workflow Engine · Node Types</span></h1>
+    <p class="page-lead">
+      <span class="zh">引擎提供 <strong>8 种节点</strong>，覆盖"起点 / 调外部 / 变数据 / 走分支 / 并行 / 汇合 / 循环 / 终点"。每种节点对应一个处理器，按类型动态分发；本页逐一讲清它的<strong>配置</strong>与<strong>输出</strong>。</span>
+      <span class="en">The engine ships <strong>8 node types</strong> covering "start / call out / reshape / branch / fork / join / loop / end". Each maps to a handler dispatched by type; this page walks through every one's <strong>config</strong> and <strong>output</strong>.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#overview"><span class="zh">节点总表</span><span class="en">Overview</span></a>
+      <a href="#start">START</a>
+      <a href="#action">ACTION</a>
+      <a href="#transform">TRANSFORM</a>
+      <a href="#logic">LOGIC</a>
+      <a href="#fork">FORK</a>
+      <a href="#join">JOIN</a>
+      <a href="#loop">LOOP</a>
+      <a href="#end">END</a>
+    </div>
+
+    <section id="overview">
+      <h2><span class="zh">节点总表</span><span class="en">Node overview</span></h2>
+      <p class="section-sub"><span class="zh">先看全景：每种节点干什么、由谁处理、要配什么、产出什么。</span><span class="en">The big picture first: what each node does, who handles it, what it needs and what it returns.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">节点</span><span class="en">Node</span></th>
+          <th><span class="zh">功能</span><span class="en">Function</span></th>
+          <th><span class="zh">处理器</span><span class="en">Handler</span></th>
+          <th><span class="zh">关键配置</span><span class="en">Key config</span></th>
+          <th><span class="zh">输出</span><span class="en">Output</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>START</code></td><td><span class="zh">流程起点，接收触发参数</span><span class="en">Entry point; receives trigger params</span></td><td><code>StartNodeHandler</code></td><td><code>trigger_rules</code></td><td><span class="zh">run_id / loop_index 回显</span><span class="en">run_id / loop_index echo</span></td></tr>
+          <tr><td><code>ACTION</code></td><td><span class="zh">发起 HTTP 请求</span><span class="en">Issues an HTTP request</span></td><td><code>ActionNodeHandler</code></td><td><code>request</code> · <code>async_mode</code> · <code>context_mappings</code></td><td><code>HttpResponseOutput</code></td></tr>
+          <tr><td><code>TRANSFORM</code></td><td><span class="zh">重塑 / 提取数据</span><span class="en">Reshapes / extracts data</span></td><td><code>TransformNodeHandler</code></td><td><code>engine</code> · <code>output_schema</code></td><td><span class="zh">按 schema 生成的 dict</span><span class="en">dict shaped by schema</span></td></tr>
+          <tr><td><code>LOGIC</code></td><td><span class="zh">条件分支</span><span class="en">Conditional branch</span></td><td><code>LogicNodeHandler</code></td><td><code>condition</code> · <code>true/false_next_node_id</code></td><td><span class="zh">result / selected_branch</span><span class="en">result / selected_branch</span></td></tr>
+          <tr><td><code>FORK</code></td><td><span class="zh">并行分发</span><span class="en">Parallel fan-out</span></td><td><code>ForkNodeHandler</code></td><td><code>branch_node_ids[]</code></td><td><span class="zh">branch_node_ids / branch_count</span><span class="en">branch_node_ids / branch_count</span></td></tr>
+          <tr><td><code>JOIN</code></td><td><span class="zh">分支汇合</span><span class="en">Branch convergence</span></td><td><code>JoinNodeHandler</code></td><td><code>mode = ALL | ANY</code></td><td><span class="zh">upstream_statuses / is_ready</span><span class="en">upstream_statuses / is_ready</span></td></tr>
+          <tr><td><code>LOOP</code></td><td><span class="zh">循环控制</span><span class="en">Loop control</span></td><td><code>LoopNodeHandler</code></td><td><code>condition</code> · <code>body_entry_id</code> · <code>exit_node_id</code> · <code>max_iterations</code></td><td><span class="zh">decision (CONTINUE/EXIT)</span><span class="en">decision (CONTINUE/EXIT)</span></td></tr>
+          <tr><td><code>END</code></td><td><span class="zh">流程终点</span><span class="en">Terminal node</span></td><td><code>EndNodeHandler</code></td><td><code>status = SUCCESS | FAILURE</code></td><td><span class="zh">end_status</span><span class="en">end_status</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>下游怎么算出来的？</strong>多数节点直接走 <code>next_node_ids</code>；但 <code>LOGIC</code>（按条件二选一）、<code>FORK</code>（一对多）、<code>LOOP</code>（回循环体或走退出）由引擎的 <code>_determine_next_nodes</code> 专门计算。这也是为什么这三种节点的"关键配置"里都带着下游节点 ID。</span>
+        <span class="en"><strong>How is the next node computed?</strong> Most nodes simply follow <code>next_node_ids</code>; but <code>LOGIC</code> (pick one of two by condition), <code>FORK</code> (one-to-many) and <code>LOOP</code> (re-enter the body or take the exit) are computed specially by the engine's <code>_determine_next_nodes</code>. That is why these three carry downstream node IDs in their config.</span>
+      </div>
+    </section>
+
+    <section id="start">
+      <h2>START <span class="zh">— 起点</span><span class="en">— Entry point</span></h2>
+      <p class="section-sub"><span class="zh">每条工作流恰好一个起点，承接触发上下文。</span><span class="en">Exactly one entry point per workflow, receiving the trigger context.</span></p>
+      <p>
+        <span class="zh">触发工作流时，应用层找到 START 节点，把它的 <code>next_node_ids</code> 作为首批节点派发出去，运行随即转入 <code>RUNNING</code>。START 处理器本身不做业务，只回显 <code>run_id</code> 与 <code>loop_index</code> 表示"已接收触发上下文"。可选的 <code>trigger_rules</code> 描述触发条件分组（字段 / 操作符 / 值，支持 AND / OR 嵌套）。</span>
+        <span class="en">On trigger, the application layer locates the START node and dispatches its <code>next_node_ids</code> as the first batch, flipping the run to <code>RUNNING</code>. The START handler does no business work itself — it echoes <code>run_id</code> and <code>loop_index</code> to confirm "trigger context accepted". The optional <code>trigger_rules</code> describe a group of trigger conditions (field / operator / value, with nested AND / OR).</span>
+      </p>
+      <div class="note"><span class="zh">START / END 的节点 ID 是保留字（如 <code>start</code>、<code>node-start</code>、<code>end</code>、<code>node-end</code>），前后端都应视为不可改名。</span><span class="en">START / END node IDs are reserved words (e.g. <code>start</code>, <code>node-start</code>, <code>end</code>, <code>node-end</code>) — both frontend and backend should treat them as un-renamable.</span></div>
+    </section>
+
+    <section id="action">
+      <h2>ACTION <span class="zh">— 调外部</span><span class="en">— Call out</span></h2>
+      <p class="section-sub"><span class="zh">工作流与外界打交道的主力节点：发一个 HTTP 请求，把响应写回上下文。</span><span class="en">The workhorse for talking to the outside world: fire one HTTP request and write the response back into context.</span></p>
+      <p>
+        <span class="zh">ACTION 节点的核心是 <code>request</code> 配置。处理器在发出前会用 Jinja2 模板渲染 <code>url</code> / <code>headers</code> / <code>params</code> / 请求体——也就是说这些字段都能引用上下文里的数据。请求体支持多形态：<code>body_type</code> 为 <code>auto</code> 时自动按 <code>json_body</code> / <code>form_body</code> / <code>raw_body</code> 与 Content-Type 推断 JSON / 表单 / multipart / 原始体。</span>
+        <span class="en">The heart of an ACTION node is its <code>request</code> config. Before firing, the handler renders <code>url</code> / <code>headers</code> / <code>params</code> / body with Jinja2 — meaning all of them can reference context data. The body is polymorphic: with <code>body_type = auto</code> the engine infers JSON / form / multipart / raw from <code>json_body</code> / <code>form_body</code> / <code>raw_body</code> and the Content-Type.</span>
+      </p>
+      <table>
+        <thead><tr><th><span class="zh">配置</span><span class="en">Config</span></th><th><span class="zh">说明</span><span class="en">Detail</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>request.url / method</code></td><td><span class="zh">目标地址与方法（默认 GET），url 经 Jinja2 渲染。</span><span class="en">Target URL and method (default GET); url is Jinja2-rendered.</span></td></tr>
+          <tr><td><code>request.headers / params</code></td><td><span class="zh">请求头与查询参数，逐个经模板渲染。</span><span class="en">Headers and query params, each template-rendered.</span></td></tr>
+          <tr><td><code>request.body / json_body / form_body / raw_body</code></td><td><span class="zh">请求体多形态来源；配合 <code>body_type</code>（auto / json / form-urlencoded / multipart / raw）选定发送方式。</span><span class="en">Polymorphic body sources; combined with <code>body_type</code> (auto / json / form-urlencoded / multipart / raw) to decide how it is sent.</span></td></tr>
+          <tr><td><code>request.timeout_seconds</code></td><td><span class="zh">请求超时，默认 30 秒。</span><span class="en">Request timeout, default 30s.</span></td></tr>
+          <tr><td><code>async_mode</code></td><td><span class="zh">为真时不等结果：注入 <code>X-Callback-Url</code>，节点转 <code>SUSPENDED</code> 等外部回调。</span><span class="en">When true, do not wait: inject <code>X-Callback-Url</code> and move the node to <code>SUSPENDED</code> awaiting an external callback.</span></td></tr>
+          <tr><td><code>context_mappings</code></td><td><span class="zh">把响应字段按点路径映射到 <code>global_context</code> 业务键，如 <code>{"biz.user_id": "json_body.data.user_id"}</code>。</span><span class="en">Maps response fields by dot path into business keys in <code>global_context</code>, e.g. <code>{"biz.user_id": "json_body.data.user_id"}</code>.</span></td></tr>
+          <tr><td><code>retry_policy</code> · <code>failure_strategy</code></td><td><span class="zh">可选重试（次数 / 间隔 / 按状态码）与失败处理策略。</span><span class="en">Optional retry (attempts / interval / on-status) and failure-handling strategy.</span></td></tr>
+        </tbody>
+      </table>
+      <h4><span class="zh">输出 HttpResponseOutput</span><span class="en">Output — HttpResponseOutput</span></h4>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Field</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>status_code</code></td><td><span class="zh">HTTP 状态码</span><span class="en">HTTP status code</span></td></tr>
+          <tr><td><code>headers</code></td><td><span class="zh">响应头</span><span class="en">Response headers</span></td></tr>
+          <tr><td><code>text</code></td><td><span class="zh">原始响应文本</span><span class="en">Raw response text</span></td></tr>
+          <tr><td><code>json_body</code></td><td><span class="zh">当响应为 JSON 时自动解析的对象</span><span class="en">Parsed object when the response is JSON</span></td></tr>
+          <tr><td><code>ok</code></td><td><span class="zh">请求是否成功（2xx）</span><span class="en">Whether the request succeeded (2xx)</span></td></tr>
+        </tbody>
+      </table>
+      <p><span class="zh">同步模式下节点返回 <code>SUCCESS</code>；异步模式（<code>async_mode=true</code>）返回 <code>SUSPENDED</code>，直到回调到达才继续。</span><span class="en">In sync mode the node returns <code>SUCCESS</code>; in async mode (<code>async_mode=true</code>) it returns <code>SUSPENDED</code> until the callback arrives.</span></p>
+      <pre><code><span class="tok-c">// ACTION 节点配置示例 / ACTION node config example</span>
+{
+  <span class="tok-s">"async_mode"</span>: <span class="tok-k">false</span>,
+  <span class="tok-s">"request"</span>: {
+    <span class="tok-s">"method"</span>: <span class="tok-s">"POST"</span>,
+    <span class="tok-s">"url"</span>: <span class="tok-s">"https://api.internal/users/{{ context.user_id }}/notify"</span>,
+    <span class="tok-s">"headers"</span>: { <span class="tok-s">"Authorization"</span>: <span class="tok-s">"Bearer {{ context.token }}"</span> },
+    <span class="tok-s">"json_body"</span>: { <span class="tok-s">"channel"</span>: <span class="tok-s">"email"</span>, <span class="tok-s">"order_id"</span>: <span class="tok-s">"{{ context.order_id }}"</span> },
+    <span class="tok-s">"timeout_seconds"</span>: <span class="tok-n">30</span>
+  },
+  <span class="tok-s">"context_mappings"</span>: { <span class="tok-s">"biz.notify_id"</span>: <span class="tok-s">"json_body.data.id"</span> }
+}</code></pre>
+    </section>
+
+    <section id="transform">
+      <h2>TRANSFORM <span class="zh">— 变数据</span><span class="en">— Reshape data</span></h2>
+      <p class="section-sub"><span class="zh">在节点之间整形数据：把上游零散字段提取、改名、拼成下游需要的形状。</span><span class="en">Reshape data between nodes: extract, rename and assemble scattered upstream fields into the shape the next node needs.</span></p>
+      <p>
+        <span class="zh">TRANSFORM 不调外部，只在上下文里做数据搬运。它按 <code>output_schema</code> 逐键求值：每个目标键对应一个表达式，由 <code>engine</code> 决定用 <strong>JMESPath</strong>（适合从 JSON 里按路径 / 过滤提取）还是 <strong>Jinja2</strong>（适合拼字符串、做简单运算），求值结果汇成一个新 dict 作为输出。</span>
+        <span class="en">TRANSFORM calls nothing external; it only moves data within the context. It evaluates the <code>output_schema</code> key by key: each target key maps to an expression, and <code>engine</code> decides whether to use <strong>JMESPath</strong> (great for path / filter extraction from JSON) or <strong>Jinja2</strong> (great for string assembly and simple arithmetic). The results form a new dict as the output.</span>
+      </p>
+      <pre><code><span class="tok-c">// TRANSFORM 节点配置示例（JMESPath 引擎）/ TRANSFORM example (JMESPath engine)</span>
+{
+  <span class="tok-s">"engine"</span>: <span class="tok-s">"JMESPATH"</span>,
+  <span class="tok-s">"output_schema"</span>: {
+    <span class="tok-s">"vip_user_ids"</span>: <span class="tok-s">"__runtime__.last_output.json_body.data[?vip==`true`].id"</span>,
+    <span class="tok-s">"total"</span>:        <span class="tok-s">"__runtime__.last_output.json_body.data | length(@)"</span>
+  }
+}</code></pre>
+    </section>
+
+    <section id="logic">
+      <h2>LOGIC <span class="zh">— 条件分支</span><span class="en">— Conditional branch</span></h2>
+      <p class="section-sub"><span class="zh">二选一：根据一个条件表达式决定走 true 路还是 false 路。</span><span class="en">One of two: a single condition expression decides whether to take the true path or the false path.</span></p>
+      <p>
+        <span class="zh">LOGIC 的 <code>condition</code> 是 Jinja2 表达式（不带 <code>{{ }}</code> 时引擎会自动补上）。渲染结果按布尔规则求值后：为真走 <code>true_next_node_id</code>，为假走 <code>false_next_node_id</code>。处理器输出里会回显 <code>result</code> 与 <code>selected_branch</code>（TRUE / FALSE），方便在运行图上看清"当时走了哪条"。</span>
+        <span class="en">LOGIC's <code>condition</code> is a Jinja2 expression (the engine auto-wraps it in <code>{{ }}</code> if omitted). After the rendered result is evaluated as a boolean: true takes <code>true_next_node_id</code>, false takes <code>false_next_node_id</code>. The handler echoes <code>result</code> and <code>selected_branch</code> (TRUE / FALSE) so the run graph shows "which way it went".</span>
+      </p>
+      <pre><code><span class="tok-c">// LOGIC 节点配置示例 / LOGIC node config example</span>
+{
+  <span class="tok-s">"condition"</span>: <span class="tok-s">"context.__runtime__.last_output.status_code == 200"</span>,
+  <span class="tok-s">"true_next_node_id"</span>:  <span class="tok-s">"node_send_receipt"</span>,
+  <span class="tok-s">"false_next_node_id"</span>: <span class="tok-s">"node_alert_ops"</span>
+}</code></pre>
+    </section>
+
+    <section id="fork">
+      <h2>FORK <span class="zh">— 并行分发</span><span class="en">— Parallel fan-out</span></h2>
+      <p class="section-sub"><span class="zh">把流程一分为多：同时派发多个分支，各自独立执行。</span><span class="en">Split the flow into many: dispatch several branches at once, each running independently.</span></p>
+      <p>
+        <span class="zh">FORK 本身不做业务，只是一个语义标记。它把 <code>branch_node_ids</code> 列表里的所有节点作为下游一次性派发；调度层会为每个分支创建独立的执行任务并行推进。处理器输出回显 <code>branch_node_ids</code> 与 <code>branch_count</code>。分支跑完后通常用 JOIN 汇合。</span>
+        <span class="en">FORK does no business work; it is a semantic marker. It dispatches every node in <code>branch_node_ids</code> as downstream at once, and the scheduling layer creates an independent execution task per branch to run them in parallel. The handler echoes <code>branch_node_ids</code> and <code>branch_count</code>. Branches usually reconverge at a JOIN.</span>
+      </p>
+    </section>
+
+    <section id="join">
+      <h2>JOIN <span class="zh">— 分支汇合</span><span class="en">— Branch convergence</span></h2>
+      <p class="section-sub"><span class="zh">把多个并行分支收束回一条线，按 ALL / ANY 决定何时放行。</span><span class="en">Collapse parallel branches back into one line, releasing on ALL or ANY semantics.</span></p>
+      <p>
+        <span class="zh">JOIN 处理器需要工作流定义来反查"谁指向我"（上游节点）。它检查这些上游节点在当前上下文里的状态：</span>
+        <span class="en">The JOIN handler needs the workflow definition to look up "who points at me" (upstream nodes). It inspects those upstream nodes' statuses in the current context:</span>
+      </p>
+      <ul>
+        <li><span class="zh"><code>mode = ALL</code>：所有上游都为 <code>SUCCESS</code> 或 <code>SKIPPED</code> 才就绪放行。</span><span class="en"><code>mode = ALL</code>: ready only when every upstream is <code>SUCCESS</code> or <code>SKIPPED</code>.</span></li>
+        <li><span class="zh"><code>mode = ANY</code>：只要有一个上游 <code>SUCCESS</code> 即就绪。</span><span class="en"><code>mode = ANY</code>: ready as soon as any one upstream is <code>SUCCESS</code>.</span></li>
+      </ul>
+      <p>
+        <span class="zh">未就绪时节点返回 <code>PENDING</code>（不向下游派发，等其余分支到齐再被重新评估）；就绪则返回 <code>SUCCESS</code> 并继续。输出含 <code>upstream_statuses</code> 与 <code>is_ready</code>。</span>
+        <span class="en">When not ready it returns <code>PENDING</code> (no downstream dispatch; it is re-evaluated as remaining branches arrive); when ready it returns <code>SUCCESS</code> and continues. The output includes <code>upstream_statuses</code> and <code>is_ready</code>.</span>
+      </p>
+    </section>
+
+    <section id="loop">
+      <h2>LOOP <span class="zh">— 循环控制</span><span class="en">— Loop control</span></h2>
+      <p class="section-sub"><span class="zh">重复执行一段循环体，直到退出条件成立或达到最大轮数。</span><span class="en">Repeat a loop body until the exit condition holds or the iteration cap is hit.</span></p>
+      <p>
+        <span class="zh">LOOP 是一个控制节点。每轮它求值退出条件 <code>condition</code>（Jinja2）：未退出则把下游指向循环体入口 <code>body_entry_id</code>；退出则走 <code>exit_node_id</code>（或节点自身的 <code>next_node_ids</code>）。当前轮次由上下文的 <code>loop_index</code> 跟踪。</span>
+        <span class="en">LOOP is a control node. Each round it evaluates the exit <code>condition</code> (Jinja2): if not exiting, it points downstream at the body entry <code>body_entry_id</code>; if exiting, it takes <code>exit_node_id</code> (or the node's own <code>next_node_ids</code>). The current round is tracked by the context's <code>loop_index</code>.</span>
+      </p>
+      <table>
+        <thead><tr><th><span class="zh">配置</span><span class="en">Config</span></th><th><span class="zh">说明</span><span class="en">Detail</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>condition</code></td><td><span class="zh">退出条件表达式；为真即退出循环。</span><span class="en">Exit condition expression; true means leave the loop.</span></td></tr>
+          <tr><td><code>body_entry_id</code></td><td><span class="zh">循环体入口节点 ID（每轮回到这里）。</span><span class="en">The loop body entry node ID (returned to each round).</span></td></tr>
+          <tr><td><code>exit_node_id</code></td><td><span class="zh">退出后去向的节点 ID。</span><span class="en">The node ID to go to after exit.</span></td></tr>
+          <tr><td><code>max_iterations</code></td><td><span class="zh">最大轮数（默认 10），到顶强制退出，防止死循环。</span><span class="en">Iteration cap (default 10); a forced exit at the top prevents infinite loops.</span></td></tr>
+          <tr><td><code>jump_target_id</code></td><td><span class="zh">兼容字段，等价于 <code>body_entry_id</code>（历史数据会自动同步）。</span><span class="en">Backward-compatible alias of <code>body_entry_id</code> (legacy data is auto-synced).</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>边界轮次防误差。</strong>当退出条件恰好在 <code>loop_index == max_iterations</code> 才变真时，引擎会做一次"上一轮探测"，允许本轮循环体再执行一次，避免出现"max=3 却只跑了 2 次"的差一错误。此外，循环体末端节点可以省略显式回边——引擎会自动把它回派给 LOOP 控制节点并 <code>loop_index + 1</code>。</span>
+        <span class="en"><strong>Boundary-round guard.</strong> When the exit condition flips true only at <code>loop_index == max_iterations</code>, the engine probes the previous round and allows the body to run once more, avoiding the "max=3 but only 2 runs" off-by-one. Also, a loop-body tail node may omit its explicit back-edge — the engine auto-dispatches it back to the LOOP control node with <code>loop_index + 1</code>.</span>
+      </div>
+    </section>
+
+    <section id="end" style="border-bottom:none">
+      <h2>END <span class="zh">— 终点</span><span class="en">— Terminal</span></h2>
+      <p class="section-sub"><span class="zh">收尾节点：决定整条运行最终是成功还是失败。</span><span class="en">The closing node: it decides whether the whole run ends as success or failure.</span></p>
+      <p>
+        <span class="zh">END 的 <code>status</code> 取 <code>SUCCESS</code> 或 <code>FAILURE</code>。当 END 以 <code>SUCCESS</code> 收尾，应用层把整条运行标记为 <code>SUCCESS</code>；反之标记 <code>FAILURE</code>。<code>config</code> 缺省时按 <code>SUCCESS</code> 处理。可选的 <code>output_schema</code> 用于约定收尾输出形状。</span>
+        <span class="en">END's <code>status</code> is either <code>SUCCESS</code> or <code>FAILURE</code>. When END finishes with <code>SUCCESS</code>, the application layer marks the whole run <code>SUCCESS</code>; otherwise <code>FAILURE</code>. A missing <code>config</code> defaults to <code>SUCCESS</code>. The optional <code>output_schema</code> shapes the final output.</span>
+      </p>
+      <pre><code><span class="tok-c">// END 节点配置示例 / END node config example</span>
+{ <span class="tok-s">"status"</span>: <span class="tok-s">"SUCCESS"</span> }</code></pre>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="workflow-concepts.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">概念与状态机</span><span class="en">Concepts & State</span></span></a>
+      <a class="next" href="workflow-scheduling.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">调度与编排</span><span class="en">Scheduling</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

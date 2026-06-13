@@ -1,0 +1,187 @@
+# Caddyfile - 反向代理和 Coraza WAF 配置
+# 集成 Coraza WAF 和完整的反向代理功能
+
+{
+    # 全局配置
+    admin 0.0.0.0:2019
+    persist_config off
+    
+    # 访问日志（JSON 格式，包含详细信息）
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json {
+            time_format iso8601
+            message_key msg
+        }
+        level INFO
+    }
+    
+    # 服务器配置
+    servers {
+        metrics
+    }
+    
+    # Coraza WAF 全局配置
+    order coraza_waf first
+}
+
+# HTTP -> HTTPS 重定向（生产环境）
+# :80 {
+#     redir https://{host}{uri} permanent
+# }
+
+# 本地开发 HTTP 端口（8080）
+http://:8080 {
+    # 访问日志
+    log {
+        output file /var/log/caddy/http-access.json {
+            roll_size 50mb
+            roll_keep 10
+        }
+        format json
+    }
+    
+    # 基础健康检查端点
+    handle /health {
+        respond "OK" 200
+    }
+
+    # ===== adminops - 运维管理前端（静态 SPA） =====
+    redir /adminops /adminops/ 308
+    # 资源文件不做 SPA 回退，避免缺失 chunk 被返回 index.html 导致 MIME 错误
+    # Do not apply SPA fallback for assets, otherwise missing chunks return HTML and break module loading
+    handle /adminops/assets/* {
+        root * /srv/www
+        file_server
+    }
+    # 入口 HTML 禁止强缓存，降低发布期间旧 runtime 引用旧 chunk 的概率
+    # Disable strong cache for entry HTML to reduce stale runtime/chunk mismatch after deployments
+    @adminops_index path /adminops /adminops/
+    header @adminops_index Cache-Control "no-store, no-cache, must-revalidate"
+
+    handle_path /adminops/* {
+        root * /srv/www/adminops
+        try_files {path} /index.html
+        file_server
+    }
+    
+    # ===== opsbffsrv - 运营管理服务 =====
+    handle /v1/opsbffsrv/* {
+        reverse_proxy opsbffsrv.service:8080 {
+            lb_policy round_robin
+            header_up X-Real-IP {remote_ip}
+            header_up X-Forwarded-For {remote_ip}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+        }
+    }
+
+    # 默认处理（404）
+    handle {
+        respond "Not Found" 404
+    }
+}
+
+# HTTPS 主配置（生产环境，带 WAF）
+:443 {
+    # TLS 配置（自动证书）
+    tls internal {
+        on_demand
+    }
+    
+    # ===== Coraza WAF 配置 =====
+    coraza_waf {
+        # 加载 WAF 配置文件
+        directives `
+            Include /etc/caddy/waf/coraza.conf
+        `
+        
+        # WAF 日志
+        # audit_log /var/log/caddy/waf-audit.log
+    }
+    
+    # 访问日志（详细的 JSON 格式）
+    log {
+        output file /var/log/caddy/access.json {
+            roll_size 50mb
+            roll_keep 20
+        }
+        format json {
+            time_format iso8601
+            message_key message
+            level_key level
+        }
+    }
+    
+    # 基础健康检查端点
+    handle /health {
+        respond "OK" 200
+    }
+
+    # ===== adminops - 运维管理前端（静态 SPA） =====
+    redir /adminops /adminops/ 308
+    # 资源文件不做 SPA 回退，避免缺失 chunk 被返回 index.html 导致 MIME 错误
+    # Do not apply SPA fallback for assets, otherwise missing chunks return HTML and break module loading
+    handle /adminops/assets/* {
+        root * /srv/www
+        file_server
+    }
+    # 入口 HTML 禁止强缓存，降低发布期间旧 runtime 引用旧 chunk 的概率
+    # Disable strong cache for entry HTML to reduce stale runtime/chunk mismatch after deployments
+    @adminops_index path /adminops /adminops/
+    header @adminops_index Cache-Control "no-store, no-cache, must-revalidate"
+
+    handle_path /adminops/* {
+        root * /srv/www/adminops
+        try_files {path} /index.html
+        file_server
+    }
+    
+    # ===== opsbffsrv - 运营管理服务 =====
+    handle /v1/opsbffsrv/* {
+        reverse_proxy opsbffsrv.service:8080 {
+            # 负载均衡
+            lb_policy round_robin
+            
+            # 请求头
+            header_up X-Real-IP {remote_ip}
+            header_up X-Forwarded-For {remote_ip}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+        }
+    }
+    
+    # 默认处理（404）
+    handle {
+        respond "Not Found" 404
+    }
+}
+
+# ===== 未来扩展：Coraza WAF 配置示例 =====
+# 注意：需要使用编译了 Coraza 模块的 Caddy 版本
+#
+# :443 {
+#     # Coraza WAF
+#     coraza {
+#         directives `
+#             SecRuleEngine On
+#             SecRequestBodyAccess On
+#             SecResponseBodyAccess Off
+#             SecRequestBodyLimit 13107200
+#             SecRequestBodyNoFilesLimit 131072
+#             
+#             # 加载 OWASP Core Rule Set
+#             Include /etc/coraza/crs-setup.conf
+#             Include /etc/coraza/rules/*.conf
+#             
+#             # 自定义规则
+#             SecRule REQUEST_URI "@contains /admin" \
+#                 "id:1001,phase:1,deny,status:403,msg:'Admin access blocked'"
+#         `
+#     }
+# }
+

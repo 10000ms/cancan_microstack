@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>controllersrv — 容器控制服务 / Container Control Service · Cancan Microstack</title>
+<meta name="description" content="controllersrv: a host-side daemon that wraps Docker/Podman dual-engine container orchestration (via dragonfly-container) behind an async task queue and an HTTP API.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="controllersrv">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title">controllersrv — <span class="zh">容器控制服务</span><span class="en">Container Control Service</span></h1>
+    <p class="page-lead">
+      <span class="zh">运行在宿主机上的守护进程，封装 Docker/Podman 双引擎容器编排（基于 <code>dragonfly-container</code>）。操作型请求走异步任务队列、立即返回流水号；查询型请求直读容器引擎。</span>
+      <span class="en">A host-side daemon wrapping Docker/Podman dual-engine container orchestration (built on <code>dragonfly-container</code>). Operations enqueue onto an async task queue and return a serial number immediately; queries read the container engine directly.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#overview"><span class="zh">概述</span><span class="en">Overview</span></a>
+      <a href="#service-ops"><span class="zh">服务操作 API</span><span class="en">Service Operation API</span></a>
+      <a href="#task-api"><span class="zh">任务管理 API</span><span class="en">Task Management API</span></a>
+      <a href="#query-api"><span class="zh">容器 / 资源查询 API</span><span class="en">Container & Resource Query API</span></a>
+      <a href="#exec-model"><span class="zh">任务执行模型</span><span class="en">Task Execution Model</span></a>
+    </div>
+
+    <section id="overview">
+      <h2><span class="zh">概述</span><span class="en">Overview</span></h2>
+      <p class="section-sub"><span class="zh">为什么它是宿主机进程，而不是栈里的一个容器。</span><span class="en">Why it runs on the host, not as a container inside the stack.</span></p>
+      <p>
+        <span class="zh">controllersrv 的职责是<strong>启停整个微服务栈</strong>。它必须能直接对 Docker/Podman 守护进程下命令，因此它<strong>不在 compose 内</strong>——若把它放进栈里，它就无法在栈尚未运行时把栈拉起来，也无法在栈崩溃后重建容器。它以宿主机进程的形态长驻，监听 HTTP，是整个 Cancan 控制面的“底座的底座”。</span>
+        <span class="en">controllersrv exists to <strong>bring the whole microservice stack up and down</strong>. It must issue commands directly to the Docker/Podman daemon, so it deliberately <strong>lives outside the compose stack</strong> — embedding it would mean it could not start the stack before the stack runs, nor rebuild containers after a crash. It runs as a long-lived host process listening over HTTP, the foundation beneath the rest of the Cancan control plane.</span>
+      </p>
+
+      <div class="grid">
+        <div class="card"><span class="ic">🔌</span><h4><span class="zh">双引擎自动检测</span><span class="en">Dual-engine auto-detect</span></h4><p><span class="zh"><code>dragonfly-container</code> 的 <code>UnifiedExecutor</code> 在 <code>ExecutorFactory.create_unified_executor()</code> 时自动探测 Docker 或 Podman，上层 API 无需区分引擎类型。</span><span class="en"><code>dragonfly-container</code>'s <code>UnifiedExecutor</code>, created via <code>ExecutorFactory.create_unified_executor()</code>, auto-detects Docker or Podman so callers never branch on engine type.</span></p></div>
+        <div class="card"><span class="ic">⏳</span><h4><span class="zh">异步任务模型</span><span class="en">Async task model</span></h4><p><span class="zh">start / stop / restart 不阻塞 HTTP 连接：请求经校验后入队，立即返回 <code>serial_number</code>，由后台 Worker 串行执行，客户端再轮询任务状态。</span><span class="en">start / stop / restart never block the HTTP connection: validated requests enqueue and return a <code>serial_number</code> at once, a background worker executes them, and clients poll for status.</span></p></div>
+        <div class="card"><span class="ic">🧾</span><h4><span class="zh">流水号防重</span><span class="en">Idempotency by serial</span></h4><p><span class="zh"><code>serial_number</code> 是去重键：同一流水号重复提交会被识别为重复任务，避免误触发多次启停。</span><span class="en">The <code>serial_number</code> is a dedup key: re-submitting the same serial is detected as a duplicate, preventing accidental double start/stop.</span></p></div>
+        <div class="card"><span class="ic">🛡️</span><h4><span class="zh">服务名白名单</span><span class="en">Service-name allowlist</span></h4><p><span class="zh">操作前由 <code>service_validator</code> 校验服务名是否合法且可操作，非法或不可操作的服务名直接拒绝。</span><span class="en">A <code>service_validator</code> checks that each service name is valid and operable before any action; invalid or non-operable names are rejected outright.</span></p></div>
+      </div>
+
+      <div class="note tip">
+        <span class="zh"><strong>限流：</strong>所有接口带本地限流（<code>@limiter_local</code>）。操作型与多数查询型为 <code>10/minute</code>，服务状态查询为 <code>30/minute</code>。所有响应统一为 <code>APIResponse</code> 信封（<code>{ code, msg, data }</code>），下表“关键字段”指 <code>data</code> 内字段。</span>
+        <span class="en"><strong>Rate limits:</strong> every endpoint is locally rate-limited (<code>@limiter_local</code>) — <code>10/minute</code> for operations and most queries, <code>30/minute</code> for service status. All responses use the unified <code>APIResponse</code> envelope (<code>{ code, msg, data }</code>); the "key fields" columns below describe the <code>data</code> payload.</span>
+      </div>
+    </section>
+
+    <section id="service-ops">
+      <h2><span class="zh">服务操作 API</span><span class="en">Service Operation API</span></h2>
+      <p class="section-sub"><span class="zh">启停重启整栈或指定服务，异步入队后返回任务凭证。</span><span class="en">Start / stop / restart the stack or named services; enqueue asynchronously and return a task handle.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>POST</code></td><td><code>/v1/controllersrv/service/start</code></td>
+            <td><span class="zh">启动指定服务，异步执行</span><span class="en">Start the named services, async</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>serial_number</code>, <code>service_names[]</code>, <code>params{}</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>status</code>(pending), <code>serial_number</code>, <code>operation</code>, <code>service_names[]</code></td>
+          </tr>
+          <tr>
+            <td><code>POST</code></td><td><code>/v1/controllersrv/service/stop</code></td>
+            <td><span class="zh">停止指定服务，异步执行</span><span class="en">Stop the named services, async</span></td>
+            <td><span class="zh">同 start，<code>operation</code> = stop</span><span class="en">Same as start; <code>operation</code> = stop</span></td>
+          </tr>
+          <tr>
+            <td><code>POST</code></td><td><code>/v1/controllersrv/service/restart</code></td>
+            <td><span class="zh">重启（stop → start），异步执行</span><span class="en">Restart (stop → start), async</span></td>
+            <td><span class="zh">同 start，<code>operation</code> = restart</span><span class="en">Same as start; <code>operation</code> = restart</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">三者请求体共用 <code>ServiceOperationRequest</code>：<code>serial_number</code>（必填，去重）、<code>service_names</code>（必填，非空字符串列表）、<code>params</code>（可选附加参数）。成功响应是 <code>EnqueueSuccessResponse</code>，<code>status</code> 恒为 <code>pending</code>——它只代表“已入队”，真实结果须凭 <code>serial_number</code> 去任务管理 API 查询。</span>
+        <span class="en">All three share the <code>ServiceOperationRequest</code> body: <code>serial_number</code> (required dedup key), <code>service_names</code> (required, non-empty string list) and <code>params</code> (optional extras). The success body is <code>EnqueueSuccessResponse</code> with <code>status</code> always <code>pending</code> — it confirms enqueue only; the real outcome is polled by <code>serial_number</code> via the Task Management API.</span>
+      </p>
+      <pre><code><span class="tok-c"># POST /v1/controllersrv/service/start</span>
+{
+  <span class="tok-s">"serial_number"</span>: <span class="tok-s">"deploy-2026-0614-01"</span>,
+  <span class="tok-s">"service_names"</span>: [<span class="tok-s">"infrasrv"</span>, <span class="tok-s">"opsbffsrv"</span>],
+  <span class="tok-s">"params"</span>: {}
+}</code></pre>
+    </section>
+
+    <section id="task-api">
+      <h2><span class="zh">任务管理 API</span><span class="en">Task Management API</span></h2>
+      <p class="section-sub"><span class="zh">查询入队任务的执行进度、历史与队列健康度。</span><span class="en">Inspect task progress, history and queue health.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/task/status</code></td>
+            <td><span class="zh">按流水号查单个任务状态与结果</span><span class="en">Single task status & result by serial</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>serial_number</code> (query) · <span class="zh">响应</span><span class="en">Resp</span>: <code>task{}</code>（含状态、结果、错误等）</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/task/list</code></td>
+            <td><span class="zh">列出任务，可按状态过滤</span><span class="en">List tasks, filterable by status</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>status</code>, <code>limit</code>(1–1000, def 100) · <span class="zh">响应</span><span class="en">Resp</span>: <code>tasks[]</code>, <code>count</code></td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/queue/stats</code></td>
+            <td><span class="zh">队列统计快照</span><span class="en">Queue statistics snapshot</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>stats{ queue_size, total_tasks, active_serial_numbers, status_counts, max_queue_size }</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <span class="zh"><strong>任务状态机：</strong><code>pending</code> → <code>running</code> → <code>success</code> / <code>failed</code>。<code>queue/stats</code> 的 <code>status_counts</code> 按这些状态聚合计数，<code>max_queue_size</code> 来自 <code>ServiceSettings.TASK_QUEUE_MAX_SIZE</code>，队列满时入队会被拒绝。</span>
+        <span class="en"><strong>Task lifecycle:</strong> <code>pending</code> → <code>running</code> → <code>success</code> / <code>failed</code>. The <code>status_counts</code> in <code>queue/stats</code> aggregates by these states; <code>max_queue_size</code> comes from <code>ServiceSettings.TASK_QUEUE_MAX_SIZE</code>, and enqueue is rejected when the queue is full.</span>
+      </div>
+    </section>
+
+    <section id="query-api">
+      <h2><span class="zh">容器 / 资源查询 API</span><span class="en">Container & Resource Query API</span></h2>
+      <p class="section-sub"><span class="zh">同步直读容器引擎：服务、容器、镜像、网络、卷与引擎健康。</span><span class="en">Synchronous reads off the container engine: services, containers, images, networks, volumes and engine health.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">方法</span><span class="en">Method</span></th>
+          <th><span class="zh">路径</span><span class="en">Path</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/service/status</code></td>
+            <td><span class="zh">查指定服务运行状态</span><span class="en">Status of named services</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_names[]</code> (opt) · <span class="zh">响应</span><span class="en">Resp</span>: <code>success</code>, <code>services[]</code></td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/service/list</code></td>
+            <td><span class="zh">列出所有受管服务</span><span class="en">List all managed services</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: <code>success</code>, <code>services[]</code></td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/container/health</code></td>
+            <td><span class="zh">查指定服务的容器健康</span><span class="en">Container health for a service</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>service_name</code> · <span class="zh">响应</span><span class="en">Resp</span>: <code>service_name</code>, <code>containers[]</code></td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/containers/list</code></td>
+            <td><span class="zh">列出项目容器</span><span class="en">List project containers</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>include_stopped</code> (bool, def false) · <span class="zh">响应</span><span class="en">Resp</span>: 容器列表</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/container/inspect</code></td>
+            <td><span class="zh">查容器详情</span><span class="en">Inspect one container</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>container_id</code> · <span class="zh">响应</span><span class="en">Resp</span>: 容器详细信息</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/container/logs</code></td>
+            <td><span class="zh">取容器日志</span><span class="en">Fetch container logs</span></td>
+            <td><span class="zh">请求</span><span class="en">Req</span>: <code>container_id</code>, <code>tail</code>(def 100), <code>since</code> (opt) · <span class="zh">响应</span><span class="en">Resp</span>: 日志文本</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/images/list</code></td>
+            <td><span class="zh">列出镜像</span><span class="en">List images</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: 镜像列表</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/networks/list</code></td>
+            <td><span class="zh">列出网络</span><span class="en">List networks</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: 网络列表</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/volumes/list</code></td>
+            <td><span class="zh">列出卷</span><span class="en">List volumes</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: 卷列表</td>
+          </tr>
+          <tr>
+            <td><code>GET</code></td><td><code>/v1/controllersrv/engine/health</code></td>
+            <td><span class="zh">容器引擎健康检查</span><span class="en">Container engine health</span></td>
+            <td><span class="zh">响应</span><span class="en">Resp</span>: 引擎类型与健康状态</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh">查询型接口（<code>containers/list</code> 起）直接走 <code>UnifiedExecutor</code> 的 API Executor 读取引擎状态，不经过任务队列，因此是同步即时返回的。</span>
+        <span class="en">Query endpoints (from <code>containers/list</code> down) read engine state directly through the <code>UnifiedExecutor</code> API executor, bypassing the task queue, so they return synchronously.</span>
+      </div>
+    </section>
+
+    <section id="exec-model" style="border-bottom:none">
+      <h2><span class="zh">任务执行模型</span><span class="en">Task Execution Model</span></h2>
+      <p class="section-sub"><span class="zh">一次 start/stop/restart 在五层之间如何流转。</span><span class="en">How one start/stop/restart flows across the five layers.</span></p>
+
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">API Layer</div><div class="d">docker_control_api</div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">Application</div><div class="d">DockerComposeApp</div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">Domain</div><div class="d">DockerComposeDomain</div></div>
+          <div class="arch-box"><div class="t">TaskQueue</div><div class="d">asyncio.Queue</div></div>
+        </div>
+        <div class="arch-arrow">↓</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">TaskWorker</div><div class="d">background loop</div></div>
+          <div class="arch-box accent"><div class="t">UnifiedExecutor</div><div class="d">Docker / Podman</div></div>
+        </div>
+      </div>
+
+      <ol class="steps">
+        <li>
+          <span class="zh"><strong>API 层</strong>（<code>docker_control_api</code>）：限流 → 校验 <code>ServiceOperationRequest</code> → 调 <code>service_validator</code> 验证服务名可操作 → 调用应用层。</span>
+          <span class="en"><strong>API layer</strong> (<code>docker_control_api</code>): rate-limit → validate <code>ServiceOperationRequest</code> → run <code>service_validator</code> to confirm the names are operable → call the application layer.</span>
+        </li>
+        <li>
+          <span class="zh"><strong>应用层</strong> <code>DockerComposeApp.create_operation_task()</code>：用 <code>serial_number</code> + 操作类型构造 <code>Task</code> 并 <code>task_queue.enqueue()</code>；重复流水号被识别为 duplicate，立即回 <code>EnqueueSuccessResponse(status=pending)</code>。</span>
+          <span class="en"><strong>Application layer</strong> <code>DockerComposeApp.create_operation_task()</code>: build a <code>Task</code> from the serial + operation type and <code>task_queue.enqueue()</code> it; a duplicate serial is detected as such, then return <code>EnqueueSuccessResponse(status=pending)</code> at once.</span>
+        </li>
+        <li>
+          <span class="zh"><strong>领域层 / 队列</strong>：<code>DockerComposeDomain</code> 持有操作语义；<code>TaskQueue</code> 是进程内 <code>asyncio.Queue</code>，容量为 <code>TASK_QUEUE_MAX_SIZE</code>，满则拒绝入队。</span>
+          <span class="en"><strong>Domain / queue</strong>: <code>DockerComposeDomain</code> holds operation semantics; <code>TaskQueue</code> is an in-process <code>asyncio.Queue</code> bounded by <code>TASK_QUEUE_MAX_SIZE</code>, rejecting enqueue when full.</span>
+        </li>
+        <li>
+          <span class="zh"><strong>TaskWorker</strong>：后台循环 <code>dequeue()</code> 任务，按操作类型用 <code>UnifiedExecutor.get_start_command / get_stop_command / get_restart_command</code> 构造命令并执行，更新任务状态为 <code>running</code> → <code>success/failed</code>。</span>
+          <span class="en"><strong>TaskWorker</strong>: a background loop that <code>dequeue()</code>s tasks, builds commands via <code>UnifiedExecutor.get_start_command / get_stop_command / get_restart_command</code> per operation type, executes them, and transitions task state <code>running</code> → <code>success/failed</code>.</span>
+        </li>
+        <li>
+          <span class="zh"><strong>Executor</strong>：<code>UnifiedExecutor</code> 屏蔽 Docker 与 Podman 差异，真正对容器引擎下命令。客户端凭 <code>serial_number</code> 调 <code>task/status</code> 拿到最终结果。</span>
+          <span class="en"><strong>Executor</strong>: <code>UnifiedExecutor</code> abstracts away the Docker/Podman difference and issues the actual engine commands. The client retrieves the final outcome via <code>task/status</code> using the <code>serial_number</code>.</span>
+        </li>
+      </ol>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="python-api.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl">Python API</span></a>
+      <a class="next" href="service-infrasrv.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl">infrasrv</span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

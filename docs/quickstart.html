@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>快速开始 / Quick Start — Cancan Microstack</title>
+<meta name="description" content="Quick Start for Cancan Microstack: from pip install to bringing up the whole infrastructure cluster with a single command.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="quickstart">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">快速开始</span><span class="en">Quick Start</span></h1>
+    <p class="page-lead">
+      <span class="zh">从 <code>pip install</code> 到一条命令拉起整套集群——五分钟跑通基础设施栈。</span>
+      <span class="en">From <code>pip install</code> to bringing up the whole cluster with one command — the infrastructure stack running in five minutes.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#install"><span class="zh">安装</span><span class="en">Install</span></a>
+      <a href="#assets"><span class="zh">浏览资产</span><span class="en">Browse assets</span></a>
+      <a href="#up"><span class="zh">一键起栈</span><span class="en">Bring up the stack</span></a>
+      <a href="#status"><span class="zh">查看与关闭</span><span class="en">Status & teardown</span></a>
+      <a href="#safety"><span class="zh">生产安全</span><span class="en">Production safety</span></a>
+      <a href="#next"><span class="zh">下一步</span><span class="en">Next steps</span></a>
+    </div>
+
+    <section id="install">
+      <h2><span class="zh">安装</span><span class="en">Install</span></h2>
+      <p class="section-sub"><span class="zh">一行 pip 命令装好整个工具箱，附带运行所需的姊妹库。</span><span class="en">One pip command installs the whole toolkit, along with the sibling libraries it needs.</span></p>
+      <pre><code><span class="tok-c"># 安装 / Install</span>
+pip install cancan-microstack</code></pre>
+      <p>
+        <span class="zh">这会一并带上 <code>linglong-web[all]</code>（Web 服务框架，配置 PostgreSQL / Redis / MongoDB / RabbitMQ / Celery）与 <code>dragonfly-container[all]</code>（容器操作封装）。</span>
+        <span class="en">This pulls in <code>linglong-web[all]</code> (the web service framework that wires up PostgreSQL / Redis / MongoDB / RabbitMQ / Celery) and <code>dragonfly-container[all]</code> (the container-control wrapper).</span>
+      </p>
+      <h3><span class="zh">前置条件</span><span class="en">Prerequisites</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">要求</span><span class="en">Requirement</span></th><th><span class="zh">说明</span><span class="en">Detail</span></th></tr></thead>
+        <tbody>
+          <tr><td>Python ≥ 3.10</td><td><span class="zh">库本身的运行环境。</span><span class="en">Runtime for the library itself.</span></td></tr>
+          <tr><td>Docker <span class="zh">或</span><span class="en"> or </span>Podman</td><td><span class="zh">运行容器栈所需；两者皆可，CLI 会自动探测。</span><span class="en">Required to run the container stack; either works, the CLI auto-detects.</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>两种调用方式。</strong>安装后即提供 <code>cancan</code> 命令；若 PATH 未生效，也可用 <code>python -m cancan_microstack.cli</code>，两者等价。</span>
+        <span class="en"><strong>Two ways to invoke.</strong> Installation provides the <code>cancan</code> command; if it is not on your PATH, <code>python -m cancan_microstack.cli</code> is exactly equivalent.</span>
+      </div>
+    </section>
+
+    <section id="assets">
+      <h2><span class="zh">浏览内置资产</span><span class="en">Browse the bundled assets</span></h2>
+      <p class="section-sub"><span class="zh">先看库里随包发布了哪些 compose / DDL / 脚本 / 运维前端，再决定起什么。</span><span class="en">First see what compose / DDL / scripts / ops UI ship with the library, then decide what to bring up.</span></p>
+      <pre><code><span class="tok-c"># 列出全部资产 / List every asset</span>
+cancan assets list
+
+<span class="tok-c"># 只看 docker 子目录 / Filter to the docker subdir</span>
+cancan assets list docker</code></pre>
+      <p>
+        <span class="zh">每条记录给出资产的<strong>逻辑名</strong>（如 <code>docker/docker-compose.infra.yml</code>）、物化后的路径与是否为目录。逻辑名是对外稳定的引用方式，无需关心库内部文件实际落在哪里。</span>
+        <span class="en">Each record shows the asset's <strong>logical name</strong> (e.g. <code>docker/docker-compose.infra.yml</code>), its materialized path, and whether it is a directory. The logical name is the stable reference — you never need to know where the file physically lives inside the package.</span>
+      </p>
+    </section>
+
+    <section id="init">
+      <h2><span class="zh">脚手架与预检</span><span class="en">Scaffold &amp; pre-flight</span></h2>
+      <p class="section-sub"><span class="zh">新工作区先 <code>init</code> 生成最小骨架，再 <code>doctor</code> 体检。</span><span class="en">For a fresh workspace, <code>init</code> generates a minimal skeleton, then <code>doctor</code> checks readiness.</span></p>
+      <pre><code><span class="tok-c"># 生成业务 compose 样例 + .env（含自动生成的 TOTP key）+ overrides 骨架</span>
+<span class="tok-c"># Scaffold a services compose sample + .env (generated TOTP key) + overrides skeleton</span>
+cancan init
+
+<span class="tok-c"># 起栈前体检：容器引擎 / 端口 / 配置 / 弱默认值</span>
+<span class="tok-c"># Pre-flight: engine / ports / config / weak defaults</span>
+cancan doctor</code></pre>
+      <p class="muted"><span class="zh"><code>doctor</code> 会提示仍在使用的弱默认口令——生产前在 <code>.env</code> 改掉。</span><span class="en"><code>doctor</code> flags weak default secrets still in use — change them in <code>.env</code> before production.</span></p>
+    </section>
+
+    <section id="up">
+      <h2><span class="zh">一键起栈</span><span class="en">Bring up the whole stack</span></h2>
+      <p class="section-sub"><span class="zh">一条 <code>stack up</code> 同时管理宿主机进程与容器栈，省去手动拼装。</span><span class="en">A single <code>stack up</code> manages both the host process and the container stack — no manual wiring.</span></p>
+      <pre><code><span class="tok-c"># 在业务仓根目录执行 / Run from your product repo root</span>
+cancan stack up --workspace . --service-file docker-compose.services.yml</code></pre>
+      <p><span class="zh">这条命令按顺序做四件事：</span><span class="en">This command does four things in order:</span></p>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">合成 compose 栈文件</span><span class="en">Synthesize the compose stack file</span></h4>
+          <p><span class="zh">以内置 infra compose 为基底，深度合并你的业务 <code>docker-compose.services.yml</code> 与任意 override，输出 <code>compose.cancan.yml</code>。</span><span class="en">Takes the built-in infra compose as the base, deep-merges your business <code>docker-compose.services.yml</code> and any overrides, and writes <code>compose.cancan.yml</code>.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">bootstrap 工作区运行文件</span><span class="en">Bootstrap workspace run files</span></h4>
+          <p><span class="zh">缺失才生成：<code>cmd/*/run.py</code> 服务包装器、用于 include 的 infra compose、镜像脚手架与 DDL、以及供 Caddy 挂载的 adminops 静态前端。已有文件不会被覆盖。</span><span class="en">Generated only when missing: <code>cmd/*/run.py</code> service wrappers, the include-ready infra compose, image scaffolds and DDL, and the adminops static frontend for Caddy to serve. Existing files are never overwritten.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">宿主机后台起 controllersrv</span><span class="en">Start controllersrv on the host</span></h4>
+          <p><span class="zh">在宿主机以守护进程方式启动 <code>controllersrv</code>，用 pidfile 管理（<code>server_log_data/pids/controllersrv.pid</code>），随后轮询 <code>/internal/health</code> 等待就绪。</span><span class="en">Launches <code>controllersrv</code> as a host daemon, tracked by a pidfile (<code>server_log_data/pids/controllersrv.pid</code>), then polls <code>/internal/health</code> until it is ready.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">拉起容器栈</span><span class="en">Bring the container stack up</span></h4>
+          <p><span class="zh">执行 <code>docker compose up -d</code>（或 <code>podman compose</code>）让其余容器后台运行；日志写入 <code>server_log_data/stack/compose.up.log</code>。</span><span class="en">Runs <code>docker compose up -d</code> (or <code>podman compose</code>) to bring the remaining containers up in the background; logs go to <code>server_log_data/stack/compose.up.log</code>.</span></p>
+        </li>
+      </ol>
+      <div class="note">
+        <span class="zh"><strong>为什么是宿主机 + 容器两层？</strong><code>controllersrv</code> 要操作 Docker/Podman，不能由 compose 自己管理，因此它跑在宿主机；其余服务是容器。<code>stack up</code> 把这两层一起拉起，所以你只需一条命令。</span>
+        <span class="en"><strong>Why host plus containers?</strong> <code>controllersrv</code> drives Docker/Podman and therefore cannot be managed by compose itself, so it runs on the host; everything else is a container. <code>stack up</code> brings both layers up together, so you only run one command.</span>
+      </div>
+      <p>
+        <span class="zh">常用开关：<code>--engine docker|podman|auto</code> 指定容器引擎（默认 <code>auto</code>）；<code>--build</code> 强制重建镜像；<code>--no-with-controllersrv</code> 跳过宿主机进程；<code>--no-bootstrap</code> 跳过运行文件生成。完整参数见 <a href="cli.html">CLI 参考</a>。</span>
+        <span class="en">Handy flags: <code>--engine docker|podman|auto</code> picks the container engine (default <code>auto</code>); <code>--build</code> forces an image rebuild; <code>--no-with-controllersrv</code> skips the host process; <code>--no-bootstrap</code> skips run-file generation. See the <a href="cli.html">CLI Reference</a> for the full set.</span>
+      </p>
+    </section>
+
+    <section id="status">
+      <h2><span class="zh">查看状态与关闭</span><span class="en">Check status and tear down</span></h2>
+      <p class="section-sub"><span class="zh">同一套命令观察与回收整栈，包括宿主机进程与容器。</span><span class="en">The same command family observes and reclaims the whole stack — host process and containers alike.</span></p>
+      <pre><code><span class="tok-c"># 查看状态：controllersrv pid + 容器 compose ps</span>
+<span class="tok-c"># Status: controllersrv pid + container compose ps</span>
+cancan stack status --workspace .
+
+<span class="tok-c"># 关闭整栈（容器 down + 停止 controllersrv）</span>
+<span class="tok-c"># Tear down (containers down + stop controllersrv)</span>
+cancan stack down --workspace .
+
+<span class="tok-c"># 连带清理命名数据卷（会丢数据）/ Also drop named volumes (destroys data)</span>
+cancan stack down --workspace . <span class="tok-f">--volumes</span></code></pre>
+      <div class="note warn">
+        <span class="zh"><code>--volumes</code> 会删除命名数据卷，PostgreSQL / MongoDB 等持久化数据将一并丢失。仅在确实要清空环境时使用。</span>
+        <span class="en"><code>--volumes</code> removes named volumes, so persisted data in PostgreSQL / MongoDB and friends is lost with it. Use it only when you genuinely want a clean slate.</span>
+      </div>
+    </section>
+
+    <section id="safety">
+      <h2><span class="zh">生产安全</span><span class="en">Production safety</span></h2>
+      <p class="section-sub"><span class="zh">开箱默认值是为开发便利，不是为生产准备的。</span><span class="en">The out-of-the-box defaults are for convenience, not for production.</span></p>
+      <div class="note warn">
+        <span class="zh"><strong>切勿沿用默认凭证。</strong>内置 compose 与服务配置使用本地开发的弱默认值（例如 <code>admin123</code>）以便开箱即用，这些值<strong>均可被环境变量覆盖</strong>。生产部署时，请务必通过环境变量注入真实凭证，绝不要把默认值带上线。</span>
+        <span class="en"><strong>Never ship the default credentials.</strong> The bundled compose and service configs use weak local-dev defaults (e.g. <code>admin123</code>) so the stack works out of the box, and <strong>every one of them is overridable via environment variables</strong>. In production, always inject real secrets through env vars — never carry the defaults to a live deployment.</span>
+      </div>
+    </section>
+
+    <section id="next" style="border-bottom:none">
+      <h2><span class="zh">下一步</span><span class="en">Next steps</span></h2>
+      <p class="section-sub"><span class="zh">栈跑起来之后，了解它背后的抽象与全貌。</span><span class="en">With the stack running, learn the abstractions and the big picture behind it.</span></p>
+      <div class="grid">
+        <a class="card" href="concepts.html"><span class="ic">💡</span><h4><span class="zh">核心概念</span><span class="en">Core Concepts</span></h4><p><span class="zh">microstack 门面、资产、工作区、免 Fork 覆盖。</span><span class="en">The microstack facade, assets, workspace, fork-free overrides.</span></p></a>
+        <a class="card" href="architecture.html"><span class="ic">🏛️</span><h4><span class="zh">总体架构</span><span class="en">Architecture</span></h4><p><span class="zh">Facade + 三子系统 + runtime + 三服务的全景。</span><span class="en">The full picture: facade + 3 subsystems + runtime + 3 services.</span></p></a>
+        <a class="card" href="workflow-concepts.html"><span class="ic">⚙️</span><h4><span class="zh">工作流引擎</span><span class="en">Workflow engine</span></h4><p><span class="zh">用可视化编排把服务串成自动化流程。</span><span class="en">Orchestrate services into automated flows, visually.</span></p></a>
+      </div>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="index.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">首页</span><span class="en">Home</span></span></a>
+      <a class="next" href="concepts.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">核心概念</span><span class="en">Core Concepts</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

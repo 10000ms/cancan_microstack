@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>服务注册与健康检查 / Registry & Health — Cancan Microstack</title>
+<meta name="description" content="infrasrv's service registry and health subsystem: a three-tier registration model, passive heartbeat plus active probing with auto-restart, a prioritized registration hook chain, zombie-instance cleanup, and config push.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="registry">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">服务注册与健康检查</span><span class="en">Registry &amp; Health</span></h1>
+    <p class="page-lead">
+      <span class="zh"><code>infrasrv</code> 提供的注册发现、心跳、钩子链与自动重启——把"谁在跑、是否健康、配置同不同步"统一收口到一套表与一组接口里。</span>
+      <span class="en">The registration, discovery, heartbeat, hook chain and auto-restart provided by <code>infrasrv</code> — consolidating "what is running, is it healthy, is its config in sync" into one set of tables and endpoints.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#model"><span class="zh">注册模型</span><span class="en">Registration model</span></a>
+      <a href="#health"><span class="zh">健康检查机制</span><span class="en">Health check</span></a>
+      <a href="#hooks"><span class="zh">注册钩子链</span><span class="en">Hook chain</span></a>
+      <a href="#cleanup"><span class="zh">僵尸实例清理</span><span class="en">Zombie cleanup</span></a>
+      <a href="#config"><span class="zh">配置同步</span><span class="en">Config sync</span></a>
+    </div>
+
+    <p class="muted"><span class="zh">下文接口以 <code>/v1/infrasrv/</code> 为前缀。</span><span class="en">Endpoints below are prefixed with <code>/v1/infrasrv/</code>.</span></p>
+
+    <section id="model">
+      <h2><span class="zh">注册模型：三张表</span><span class="en">Registration model: three tables</span></h2>
+      <p class="section-sub"><span class="zh">服务（service）→ 实例（instance）→ 配置（config），一对多逐层展开，全部以 <code>service_name</code> 关联。</span><span class="en">Service → instance → config, fanning out one-to-many at each tier, all joined by <code>service_name</code>.</span></p>
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">service_info_tbl</div><div class="d"><span class="zh">服务主记录</span><span class="en">service master</span></div></div>
+        </div>
+        <div class="arch-arrow">▼ 1 : N</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">service_instance_tbl</div><div class="d"><span class="zh">运行实例</span><span class="en">live instances</span></div></div>
+          <div class="arch-box"><div class="t">service_config_tbl</div><div class="d"><span class="zh">配置键值</span><span class="en">config key-values</span></div></div>
+        </div>
+      </div>
+
+      <h3><span class="zh">service_info_tbl — 服务主记录</span><span class="en">service_info_tbl — service master</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Column</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>service_name</code></td><td><span class="zh">服务名，唯一</span><span class="en">Service name, unique</span></td></tr>
+          <tr><td><code>service_type</code></td><td><span class="zh">类型：<code>business</code> / <code>infrastructure</code> / <code>ops</code>，默认 <code>business</code></span><span class="en">Type: <code>business</code> / <code>infrastructure</code> / <code>ops</code>, default <code>business</code></span></td></tr>
+          <tr><td><code>health_check_path</code></td><td><span class="zh">健康探测路径，默认 <code>/internal/health</code></span><span class="en">Health-probe path, default <code>/internal/health</code></span></td></tr>
+          <tr><td><code>expected_status</code></td><td><span class="zh">期望状态（运行 / 停止），默认 <code>running</code></span><span class="en">Desired state (running / stopped), default <code>running</code></span></td></tr>
+          <tr><td><code>desired_replicas</code> / <code>actual_replicas</code></td><td><span class="zh">目标 / 当前实例数</span><span class="en">Target / current instance count</span></td></tr>
+          <tr><td><code>service_metadata</code> / <code>scale_policy</code></td><td><span class="zh">自定义元数据 / 伸缩策略（JSONB）</span><span class="en">Custom metadata / scale policy (JSONB)</span></td></tr>
+          <tr><td><code>registered_time</code> / <code>last_registered_time</code></td><td><span class="zh">首次 / 最近注册时间</span><span class="en">First / latest registration time</span></td></tr>
+          <tr><td><code>flag</code></td><td><span class="zh">软删标记：0 有效，1 删除</span><span class="en">Soft-delete flag: 0 active, 1 deleted</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">service_instance_tbl — 运行实例</span><span class="en">service_instance_tbl — live instances</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Column</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>instance_id</code></td><td><span class="zh">全局唯一实例 ID</span><span class="en">Globally unique instance ID</span></td></tr>
+          <tr><td><code>service_name</code></td><td><span class="zh">所属服务（关联主表）</span><span class="en">Owning service (joins the master)</span></td></tr>
+          <tr><td><code>host</code> / <code>port</code> / <code>internal_port</code></td><td><span class="zh">网络地址、端口、容器内端口（默认 8080）</span><span class="en">Network address, port, in-container port (default 8080)</span></td></tr>
+          <tr><td><code>container_name</code> / <code>compose_service_name</code></td><td><span class="zh">Docker 容器名 / Compose 服务名</span><span class="en">Docker container / Compose service name</span></td></tr>
+          <tr><td><code>status</code></td><td><span class="zh">生命周期状态：<code>UP</code> / <code>DOWN</code> / <code>UNHEALTHY</code> / <code>STARTING</code>，默认 <code>UP</code></span><span class="en">Lifecycle status: <code>UP</code> / <code>DOWN</code> / <code>UNHEALTHY</code> / <code>STARTING</code>, default <code>UP</code></span></td></tr>
+          <tr><td><code>health_status</code></td><td><span class="zh">健康判定：<code>healthy</code> / <code>unhealthy</code> / <code>unknown</code> / <code>degraded</code> / <code>exempted</code> / <code>expected_stopped</code></span><span class="en">Health verdict: <code>healthy</code> / <code>unhealthy</code> / <code>unknown</code> / <code>degraded</code> / <code>exempted</code> / <code>expected_stopped</code></span></td></tr>
+          <tr><td><code>last_heartbeat</code></td><td><span class="zh">最近心跳时间（被动信号）</span><span class="en">Last heartbeat time (passive signal)</span></td></tr>
+          <tr><td><code>last_health_check</code> / <code>last_health_error</code></td><td><span class="zh">最近探测时间 / 最近失败原因</span><span class="en">Last probe time / last failure reason</span></td></tr>
+          <tr><td><code>consecutive_failures</code> / <code>restart_count</code></td><td><span class="zh">连续失败计数 / 自动重启次数</span><span class="en">Consecutive-failure count / auto-restart count</span></td></tr>
+          <tr><td><code>started_at</code> / <code>stopped_at</code></td><td><span class="zh">启动 / 停止时间</span><span class="en">Start / stop time</span></td></tr>
+          <tr><td><code>flag</code></td><td><span class="zh">软删标记：0 有效，1 删除</span><span class="en">Soft-delete flag: 0 active, 1 deleted</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="zh">service_config_tbl — 配置键值</span><span class="en">service_config_tbl — config key-values</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">字段</span><span class="en">Column</span></th><th><span class="zh">含义</span><span class="en">Meaning</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>service_name</code> + <code>conf_key</code></td><td><span class="zh">联合唯一键：一个服务一个 key 一条配置</span><span class="en">Composite unique key: one config per service per key</span></td></tr>
+          <tr><td><code>conf_value</code></td><td><span class="zh">配置值（字符串 / JSON 文本）</span><span class="en">Config value (string / JSON text)</span></td></tr>
+          <tr><td><code>flag</code></td><td><span class="zh">软删标记：0 有效，1 删除</span><span class="en">Soft-delete flag: 0 active, 1 deleted</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note">
+        <span class="zh"><strong>读模型入口。</strong>查询侧通过 <code>registry/services</code>（服务名列表）、<code>registry/services/overview</code>（概览）、<code>registry/instances</code> 与 <code>registry/instances/all</code>（实例）、<code>registry/instance</code>（单实例详情）逐层下钻。</span>
+        <span class="en"><strong>Read entrypoints.</strong> The query side drills down via <code>registry/services</code> (names), <code>registry/services/overview</code> (overview), <code>registry/instances</code> and <code>registry/instances/all</code> (instances), and <code>registry/instance</code> (single-instance detail).</span>
+      </div>
+    </section>
+
+    <section id="health">
+      <h2><span class="zh">健康检查机制</span><span class="en">Health-check mechanism</span></h2>
+      <p class="section-sub"><span class="zh">被动心跳兜底"还活着"，主动探测确认"还健康"，连续失败触发自动重启，操作窗口内予以豁免。</span><span class="en">Passive heartbeat catches "still alive", active probing confirms "still healthy", repeated failures trigger auto-restart, and an operation window grants exemption.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">机制</span><span class="en">Mechanism</span></th><th><span class="zh">依据字段 / 常量</span><span class="en">Field / constant</span></th><th><span class="zh">行为</span><span class="en">Behavior</span></th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="zh">被动心跳</span><span class="en">Passive heartbeat</span></td>
+            <td><code>last_heartbeat</code><br><code>INSTANCE_HEARTBEAT_TIMEOUT_SECONDS=90</code></td>
+            <td><span class="zh">实例自报心跳；超 90 秒未更新即判为僵尸候选。</span><span class="en">Instances self-report; no update for 90s flags it as a zombie candidate.</span></td>
+          </tr>
+          <tr>
+            <td><span class="zh">主动探测</span><span class="en">Active probe</span></td>
+            <td><code>health_check_path</code>（<code>/internal/health</code>）<br><code>HEALTH_CHECK_TIMEOUT=10s</code> · <code>RETRY=2</code></td>
+            <td><span class="zh">HTTP 探测实例 <code>host:port</code> 的健康路径，期望 200，失败重试 2 次（间隔 1s）。</span><span class="en">HTTP-probes the instance's <code>host:port</code> health path, expecting 200, retrying twice (1s apart) on failure.</span></td>
+          </tr>
+          <tr>
+            <td><span class="zh">自动重启</span><span class="en">Auto-restart</span></td>
+            <td><code>consecutive_failures</code><br><code>CONSECUTIVE_FAILURE_THRESHOLD=3</code></td>
+            <td><span class="zh">连续失败达 3 次 → 标 <code>UNHEALTHY</code> 并触发重启（回调 controllersrv 的异步重启接口）。</span><span class="en">Three consecutive failures → mark <code>UNHEALTHY</code> and trigger a restart (callback to controllersrv's async-restart endpoint).</span></td>
+          </tr>
+          <tr>
+            <td><span class="zh">窗口豁免</span><span class="en">Window exemption</span></td>
+            <td><code>OPERATION_WINDOW_MINUTES=5</code></td>
+            <td><span class="zh">若该实例 5 分钟内有进行中 / 刚完成的运维操作（如重启），探测予以豁免，<code>health_status=exempted</code>，避免误判。</span><span class="en">If the instance had an in-progress / just-completed op (e.g. restart) within 5 minutes, probing is exempted with <code>health_status=exempted</code> to avoid false alarms.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="hooks">
+      <h2><span class="zh">注册钩子链</span><span class="en">Registration hook chain</span></h2>
+      <p class="section-sub"><span class="zh">注册 / 注销前后插入可扩展校验与加工，按优先级串行执行，结果决定链路是否继续。</span><span class="en">Extensible validation and enrichment around register / deregister, run serially by priority, with the result deciding whether the chain proceeds.</span></p>
+      <p>
+        <span class="zh">钩子类型分 <code>PRE_REGISTER</code> / <code>POST_REGISTER</code> / <code>PRE_DEREGISTER</code>（及对应的 <code>POST_DEREGISTER</code>）。同一阶段的钩子按<strong>优先级值升序</strong>串行执行（值越小越先；内置档位 <code>HIGHEST=0</code> / <code>HIGH=25</code> / <code>NORMAL=50</code> / <code>LOW=75</code> / <code>LOWEST=100</code>），全局钩子先于按服务类型的钩子。</span>
+        <span class="en">Hook types are <code>PRE_REGISTER</code> / <code>POST_REGISTER</code> / <code>PRE_DEREGISTER</code> (plus the matching <code>POST_DEREGISTER</code>). Hooks in a stage run serially in <strong>ascending priority order</strong> (lower runs first; built-in tiers <code>HIGHEST=0</code> / <code>HIGH=25</code> / <code>NORMAL=50</code> / <code>LOW=75</code> / <code>LOWEST=100</code>), with global hooks ahead of service-type-specific ones.</span>
+      </p>
+      <h3><span class="zh">结果语义</span><span class="en">Result semantics</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">结果</span><span class="en">Result</span></th><th><span class="zh">链路动作</span><span class="en">Chain action</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>SUCCESS</code></td><td><span class="zh">继续执行下一个钩子。</span><span class="en">Continue to the next hook.</span></td></tr>
+          <tr><td><code>FAILURE</code></td><td><span class="zh">记警告并继续（可在 <code>max_retries</code> 内重试，默认 2）。</span><span class="en">Log a warning and continue (retrying within <code>max_retries</code>, default 2).</span></td></tr>
+          <tr><td><code>TERMINATE</code></td><td><span class="zh">立即终止，<strong>拒绝注册并返回 HTTP 400</strong>（错误码 <code>REGISTRATION_REJECTED</code>）。</span><span class="en">Stop immediately, <strong>reject registration and return HTTP 400</strong> (error code <code>REGISTRATION_REJECTED</code>).</span></td></tr>
+          <tr><td><code>SKIP</code> / <code>RETRY</code></td><td><span class="zh">跳过当前钩子继续 / 请求重试当前钩子。</span><span class="en">Skip this hook and continue / request a retry of this hook.</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>内置钩子示例。</strong>服务名格式校验、Host 校验（拒绝 <code>localhost</code> / <code>127.0.0.1</code> / <code>0.0.0.0</code>）、元数据加工（补 <code>registered_at</code>、推断 <code>service_type</code>）、端口范围校验（1024–65535）、单服务实例配额。这些都是普通钩子，可按需扩展。</span>
+        <span class="en"><strong>Built-in hooks (examples).</strong> Service-name format check, host check (reject <code>localhost</code> / <code>127.0.0.1</code> / <code>0.0.0.0</code>), metadata enrichment (add <code>registered_at</code>, infer <code>service_type</code>), port-range check (1024–65535), and per-service instance quota. These are ordinary hooks you can extend.</span>
+      </div>
+      <h3><span class="zh">钩子监控</span><span class="en">Hook monitoring</span></h3>
+      <table>
+        <thead><tr><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>GET hooks/metrics</code></td><td><span class="zh">钩子执行计数 / 直方图 / 仪表等指标</span><span class="en">Execution counters / histograms / gauges</span></td></tr>
+          <tr><td><code>GET hooks/history</code></td><td><span class="zh">执行历史（可按 <code>hook_name</code>、<code>limit</code> 过滤）</span><span class="en">Execution history (filter by <code>hook_name</code>, <code>limit</code>)</span></td></tr>
+          <tr><td><code>GET hooks/performance</code></td><td><span class="zh">单钩子性能（平均 / 最小 / 最大耗时、成功率）</span><span class="en">Per-hook performance (avg / min / max time, success rate)</span></td></tr>
+          <tr><td><code>GET hooks/status</code></td><td><span class="zh">按类型 + 优先级分组的钩子清单与指标汇总</span><span class="en">Hooks grouped by type + priority, with metric summary</span></td></tr>
+          <tr><td><code>POST hooks/metrics/reset</code></td><td><span class="zh">重置计数指标并清空历史</span><span class="en">Reset counters and clear history</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="cleanup">
+      <h2><span class="zh">僵尸实例清理</span><span class="en">Zombie-instance cleanup</span></h2>
+      <p class="section-sub"><span class="zh">心跳超时先软删，下沉一段时间后再硬删；连续探测失败则标 DOWN 触发重启。</span><span class="en">Heartbeat timeout soft-deletes first, then hard-deletes after settling; repeated probe failures mark DOWN and trigger a restart.</span></p>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">阶段一：软删僵尸</span><span class="en">Phase 1: soft-delete zombies</span></h4>
+          <p><span class="zh">仍为 <code>UP</code> 但 <code>last_heartbeat</code> 超 90 秒（或创建超时）的实例，软删——置 <code>flag=1</code> 并 <code>status=DOWN</code>，记原因"Stale heartbeat"。</span><span class="en">Instances still <code>UP</code> but with <code>last_heartbeat</code> over 90s stale (or creation-timed-out) are soft-deleted — set <code>flag=1</code> and <code>status=DOWN</code>, reason "Stale heartbeat".</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">阶段二：硬删下沉实例</span><span class="en">Phase 2: hard-delete settled instances</span></h4>
+          <p><span class="zh">已 <code>DOWN</code> 且 <code>update_time</code> 再超 90 秒的实例，物理删除，彻底出表。</span><span class="en">Instances already <code>DOWN</code> whose <code>update_time</code> is a further 90s stale are physically deleted, fully leaving the table.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">探测失败路线</span><span class="en">Probe-failure path</span></h4>
+          <p><span class="zh">与心跳并行：主动探测连续失败超阈值（3 次）的实例标 <code>UNHEALTHY</code> 并触发自动重启——区别于心跳超时的"无信号"路线。</span><span class="en">In parallel with heartbeats: an instance whose active probes fail past the threshold (3) is marked <code>UNHEALTHY</code> and auto-restarted — distinct from the "no signal" heartbeat path.</span></p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="config" style="border-bottom:none">
+      <h2><span class="zh">服务配置同步</span><span class="en">Service-config sync</span></h2>
+      <p class="section-sub"><span class="zh">配置写在中心表里，再由 push 广播给该服务的活跃实例热加载。</span><span class="en">Config is written to the central table, then push-broadcast to the service's live instances for hot reload.</span></p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">路径</span><span class="en">Path</span></th><th><span class="zh">用途</span><span class="en">Purpose</span></th></tr></thead>
+        <tbody>
+          <tr><td>GET</td><td><code>service_config</code></td><td><span class="zh">按 <code>service_name</code> 取配置</span><span class="en">Fetch config by <code>service_name</code></span></td></tr>
+          <tr><td>GET</td><td><code>service_configs</code></td><td><span class="zh">取全部服务的配置</span><span class="en">Fetch every service's config</span></td></tr>
+          <tr><td>POST / PUT / DELETE</td><td><code>service_config</code></td><td><span class="zh">新增 / 更新 / 删除配置键</span><span class="en">Create / update / delete config keys</span></td></tr>
+          <tr><td>POST</td><td><code>internal/config/push</code></td><td><span class="zh">把某服务配置广播下发给其活跃实例</span><span class="en">Broadcast a service's config to its live instances</span></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">配置更新后调用 <code>internal/config/push</code>：infrasrv 取出该服务在 <code>service_config_tbl</code> 的全部键值，拼成配置字典，逐个 POST 到各活跃实例的 <code>/internal/config/update</code> 让其热加载。返回<strong>分实例的部分成功结果</strong>（总数 / 成功 / 失败 + 每实例明细）；个别下发失败仅记警告，不会立即把实例标 DOWN，留待下一轮健康检查处理。</span>
+        <span class="en">After a config update, call <code>internal/config/push</code>: infrasrv reads all of that service's key-values from <code>service_config_tbl</code>, assembles a config dict, and POSTs it to each live instance's <code>/internal/config/update</code> for hot reload. It returns a <strong>per-instance partial-success result</strong> (total / success / failed + per-instance detail); individual push failures are logged as warnings only — they do not immediately mark an instance DOWN, leaving that to the next health-check cycle.</span>
+      </p>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="caddy.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">Caddy 网关</span><span class="en">Caddy Gateway</span></span></a>
+      <a class="next" href="logging.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">日志管道</span><span class="en">Logging Pipeline</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>运维前端 / Admin Ops UI — Cancan Microstack</title>
+<meta name="description" content="The Admin Ops UI bundled with Cancan Microstack: a pre-built single-page operations console served by opsbffsrv, covering service ops, workflow orchestration, log search, Caddy gateway and database admin.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="adminops">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">运维前端 Admin Ops UI</span><span class="en">Admin Ops UI</span></h1>
+    <p class="page-lead">
+      <span class="zh">随库附带的运维管理前端——一份开箱即用的<strong>构建产物</strong>，由 <code>opsbffsrv</code> 提供全部后端接口，经 Caddy 挂载在 <code>/adminops/</code> 下。</span>
+      <span class="en">The ops admin frontend that ships with the library — a ready-to-serve <strong>build artifact</strong> backed entirely by <code>opsbffsrv</code> and mounted by Caddy under <code>/adminops/</code>.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#artifact"><span class="zh">只含构建产物</span><span class="en">Build artifact only</span></a>
+      <a href="#serving"><span class="zh">如何被托管</span><span class="en">How it is served</span></a>
+      <a href="#pages"><span class="zh">功能页一览</span><span class="en">Screen catalogue</span></a>
+      <a href="#flows"><span class="zh">核心运维流程</span><span class="en">Core ops flows</span></a>
+    </div>
+
+    <section id="artifact">
+      <h2><span class="zh">cancan 只包含前端构建产物</span><span class="en">Cancan ships only the build artifact</span></h2>
+      <p class="section-sub"><span class="zh">前端源码在独立私有仓维护；本库随包发布的是已经 <code>vite build</code> 出来的静态 <code>dist</code>。</span><span class="en">The frontend source lives in a separate private repo; what this library ships is the already-built static <code>dist</code> from <code>vite build</code>.</span></p>
+      <p>
+        <span class="zh">运维前端是一个 Vite 构建的单页应用（SPA），随库发布在资产路径 <code>assets/www/adminops/</code> 下：一个 <code>index.html</code>、一份资源清单，加上按视图切分的 JS / CSS chunk（如 <code>ServiceList-*.js</code>、<code>WorkflowDesigner-*.js</code>，文件名带内容哈希）。本库<strong>不含前端源码</strong>，只是把它的产物当作一项资产携带。</span>
+        <span class="en">The ops UI is a Vite-built single-page application (SPA) shipped under the asset path <code>assets/www/adminops/</code>: one <code>index.html</code>, an asset manifest, and per-view JS / CSS chunks (e.g. <code>ServiceList-*.js</code>, <code>WorkflowDesigner-*.js</code>, with content-hashed filenames). This library carries <strong>no frontend source</strong> — only the artifact, treated as an asset.</span>
+      </p>
+      <div class="note">
+        <span class="zh"><strong>更新流程（三步）。</strong>① 在私有源码仓里 <code>build</code>；② 把产出的 <code>dist/</code> 整体覆盖到本库的 <code>assets/www/adminops/</code>；③ 重新发布 cancan 库版本。运维前端因此随<strong>库版本</strong>演进——和 compose / DDL 等其他资产一样，由库统一分发，业务仓不必自行维护或拷贝。</span>
+        <span class="en"><strong>Update flow (three steps).</strong> ① <code>build</code> in the private source repo; ② copy the resulting <code>dist/</code> over this library's <code>assets/www/adminops/</code>; ③ cut a new cancan release. The ops UI thus evolves with the <strong>library version</strong> — like compose / DDL and the other assets, distributed by the library so product repos never maintain or copy it.</span>
+      </div>
+    </section>
+
+    <section id="serving">
+      <h2><span class="zh">如何被托管</span><span class="en">How it is served</span></h2>
+      <p class="section-sub"><span class="zh">起栈时物化到工作区，Caddy 作为静态 + SPA 回退托管，API 反代到 opsbffsrv。</span><span class="en">Materialized into the workspace at stack-up, served by Caddy as static + SPA fallback, with the API reverse-proxied to opsbffsrv.</span></p>
+      <p>
+        <span class="zh"><code>cancan stack up</code> 的 bootstrap 阶段会把这份前端导出到工作区（默认 <code>builds/caddy/www/adminops</code>，已存在则不覆盖）。运行时 Caddy 把它挂在 <code>/adminops/</code>：静态资源 <code>/adminops/assets/*</code> 直出，其余路径回退到 <code>index.html</code> 以支持前端路由；<code>index.html</code> 带 <code>no-store</code> 缓存头，避免发布后 chunk 不匹配。前端调用的所有接口（<code>/v1/opsbffsrv/*</code>）由 Caddy 反向代理到 <code>opsbffsrv</code>。</span>
+        <span class="en">During the bootstrap phase of <code>cancan stack up</code>, this frontend is exported into the workspace (by default <code>builds/caddy/www/adminops</code>, never overwriting an existing copy). At runtime Caddy mounts it at <code>/adminops/</code>: static assets under <code>/adminops/assets/*</code> are served directly, while every other path falls back to <code>index.html</code> for client-side routing; <code>index.html</code> carries a <code>no-store</code> cache header to avoid chunk mismatches after a release. Every API the frontend calls (<code>/v1/opsbffsrv/*</code>) is reverse-proxied by Caddy to <code>opsbffsrv</code>.</span>
+      </p>
+    </section>
+
+    <section id="pages">
+      <h2><span class="zh">功能页一览</span><span class="en">Screen catalogue</span></h2>
+      <p class="section-sub"><span class="zh">每个视图对应一个构建 chunk，背后是一组 opsbffsrv 接口。</span><span class="en">Each view maps to a build chunk, backed by a set of opsbffsrv endpoints.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">页面</span><span class="en">Screen</span></th>
+          <th><span class="zh">运维能力</span><span class="en">Capability</span></th>
+          <th><span class="zh">依赖的 opsbffsrv API</span><span class="en">opsbffsrv API</span></th>
+        </tr></thead>
+        <tbody>
+          <tr><td>LoginView</td><td><span class="zh">用户名 / 密码 + 图形验证码登录</span><span class="en">Username / password + captcha login</span></td><td><code>GET auth/captcha</code> · <code>POST auth/login</code></td></tr>
+          <tr><td>TotpBindView</td><td><span class="zh">首次绑定 TOTP（拿绑定信息 + 二维码 → 提交验证码完成绑定）</span><span class="en">First-time TOTP binding (fetch setup + QR, submit code to bind)</span></td><td><code>POST auth/totp/setup</code> · <code>POST auth/totp/bind</code></td></tr>
+          <tr><td>TotpVerifyView</td><td><span class="zh">已绑定用户的二次验证（6 位动态码）</span><span class="en">Second factor for bound users (6-digit TOTP)</span></td><td><code>POST auth/totp/verify</code></td></tr>
+          <tr><td>DashboardNew</td><td><span class="zh">仪表板：服务概览 + 实例统计 + 工作流统计聚合</span><span class="en">Dashboard: service overview + instance stats + workflow stats</span></td><td><code>GET registry/services/overview</code> · <code>GET instance/stats</code> · <code>GET ops/workflows/stats</code></td></tr>
+          <tr><td>ServiceList</td><td><span class="zh">服务 / 实例列表，按服务聚合状态</span><span class="en">Service / instance list, aggregated by service</span></td><td><code>GET registry/services</code> · <code>GET registry/instances/all</code> · <code>GET instance/list</code></td></tr>
+          <tr><td>ServiceDetail</td><td><span class="zh">单服务详情：实例、配置、操作历史</span><span class="en">Single-service detail: instances, config, operation history</span></td><td><code>GET registry/instances</code> · <code>GET instance/detail</code> · <code>GET operation/list</code></td></tr>
+          <tr><td>ServiceCard</td><td><span class="zh">实例卡片：发起启 / 停 / 重启等运维动作</span><span class="en">Instance card: start / stop / restart actions</span></td><td><code>POST async/service/start</code> · <code>POST async/service/stop</code> · <code>POST async/service/restart</code></td></tr>
+          <tr><td>OperationProgressDialog</td><td><span class="zh">异步操作进度弹窗，轮询操作状态直至完成</span><span class="en">Async-operation progress dialog, polls until done</span></td><td><code>GET operation/status</code></td></tr>
+          <tr><td>LogSearch</td><td><span class="zh">业务日志检索（按服务 / 级别 / 关键词 / 时间窗）</span><span class="en">Business-log search (service / level / keyword / time window)</span></td><td><code>POST logs/search</code></td></tr>
+          <tr><td>ServiceLogs</td><td><span class="zh">服务动作日志（启停 / 重启等操作记录）</span><span class="en">Service-action logs (start / stop / restart records)</span></td><td><code>GET service_logs</code> · <code>GET service_logs/by_service</code></td></tr>
+          <tr><td>WorkflowCenter</td><td><span class="zh">工作流中心：列表 / 启停 / 复制 / 发布 / 触发入口</span><span class="en">Workflow center: list / toggle / duplicate / publish / trigger</span></td><td><code>GET ops/workflows</code> · <code>POST ops/workflows/{id}/toggle</code> · <code>POST ops/workflows/{id}/publish</code></td></tr>
+          <tr><td>WorkflowDesigner</td><td><span class="zh">可视化编排器：建 / 改 / 校验 / 版本回滚工作流图</span><span class="en">Visual designer: create / edit / validate / roll back workflow graphs</span></td><td><code>POST ops/workflows</code> · <code>PUT ops/workflows/{id}</code> · <code>POST ops/workflows/{id}/validate</code> · <code>GET/POST ops/workflows/{id}/versions|rollback</code></td></tr>
+          <tr><td>WorkflowRuns</td><td><span class="zh">运行记录：运行列表、实时运行图、节点日志、告警处置</span><span class="en">Runs: run list, live run graph, node logs, alert handling</span></td><td><code>GET ops/runs</code> · <code>GET ops/runs/{run_id}/graph</code> · <code>GET ops/runs/{run_id}/nodes/{node_id}/logs</code> · <code>GET ops/workflows/alerts</code></td></tr>
+          <tr><td>RouteManage</td><td><span class="zh">Caddy 路由管理：CRUD、启停、批量同步、按域名查</span><span class="en">Caddy route management: CRUD, toggle, batch sync, by-domain</span></td><td><code>… caddy/routes</code> · <code>POST caddy/routes/sync</code> · <code>GET caddy/routes/by-domain/{domain}</code></td></tr>
+          <tr><td>RateLimitManage</td><td><span class="zh">速率限制规则：CRUD、启停、白 / 黑名单维护</span><span class="en">Rate-limit rules: CRUD, toggle, white/blacklist upkeep</span></td><td><code>… caddy/rate-limits</code> · <code>… {rule_id}/whitelist|blacklist</code></td></tr>
+          <tr><td>StatsOverview</td><td><span class="zh">网关统计概览：实时流量、趋势、Top 国家 / IP</span><span class="en">Gateway stats overview: realtime, trend, top countries / IPs</span></td><td><code>GET caddy/stats/realtime/*</code> · <code>GET caddy/stats/trend/*</code> · <code>GET caddy/stats/top/*</code></td></tr>
+          <tr><td>ConsoleManage</td><td><span class="zh">数据库 / 中间件 Web 控制台代理（pgweb、redis-commander、mongo-express、RabbitMQ 管理）</span><span class="en">DB / middleware web-console proxy (pgweb, redis-commander, mongo-express, RabbitMQ mgmt)</span></td><td><code>… pgweb/*</code> · <code>… redis_commander/*</code> · <code>… mongo_express/*</code> · <code>… rabbitmq_mgmt/*</code></td></tr>
+          <tr><td>ConfigManage</td><td><span class="zh">服务配置管理：按服务 key-value 增删改查</span><span class="en">Service-config management: per-service key-value CRUD</span></td><td><code>GET/POST/PUT/DELETE service_config</code> · <code>GET service_config/all</code></td></tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh"><strong>页面 = chunk。</strong>上表的页面名直接对应构建产物里的 chunk 文件名；新增 / 改名页面属于源码仓的事，本库只随版本更新承接结果。</span>
+        <span class="en"><strong>Screen = chunk.</strong> The screen names above map one-to-one to chunk filenames in the artifact; adding or renaming a screen is the source repo's job — this library only picks up the result on each release.</span>
+      </div>
+    </section>
+
+    <section id="flows" style="border-bottom:none">
+      <h2><span class="zh">核心运维流程</span><span class="en">Core ops flows</span></h2>
+      <p class="section-sub"><span class="zh">三条最常用链路，展示前端如何串起 opsbffsrv 接口。</span><span class="en">Three everyday flows showing how the frontend strings opsbffsrv endpoints together.</span></p>
+
+      <h3><span class="zh">① 服务启停</span><span class="en">① Start / stop a service</span></h3>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">在 ServiceCard 上发起动作</span><span class="en">Trigger from a ServiceCard</span></h4>
+          <p><span class="zh">点击实例卡片的启 / 停 / 重启，前端 <code>POST async/service/start</code>（或 stop / restart）。这是<strong>异步</strong>接口，立即返回一个操作 ID。</span><span class="en">Clicking start / stop / restart on an instance card calls <code>POST async/service/start</code> (or stop / restart). It is an <strong>async</strong> endpoint that returns an operation ID immediately.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">弹出进度对话框并轮询</span><span class="en">Open the progress dialog and poll</span></h4>
+          <p><span class="zh"><code>OperationProgressDialog</code> 用返回的操作 ID 反复 <code>GET operation/status</code>，把进度回显给用户，直到状态终态（成功 / 失败）。</span><span class="en"><code>OperationProgressDialog</code> repeatedly calls <code>GET operation/status</code> with that operation ID, echoing progress until it reaches a terminal state (success / failure).</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">刷新列表</span><span class="en">Refresh the list</span></h4>
+          <p><span class="zh">完成后回到 <code>ServiceList</code> / <code>ServiceDetail</code>，重新拉取实例与状态。</span><span class="en">On completion the user returns to <code>ServiceList</code> / <code>ServiceDetail</code>, which re-fetch instances and status.</span></p>
+        </li>
+      </ol>
+
+      <h3><span class="zh">② 工作流编排</span><span class="en">② Orchestrate a workflow</span></h3>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">在工作流中心建 / 选工作流</span><span class="en">Create or pick a workflow in the center</span></h4>
+          <p><span class="zh"><code>WorkflowCenter</code> 列出全部工作流，进入某个工作流的设计器。</span><span class="en"><code>WorkflowCenter</code> lists every workflow; open one in the designer.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">在设计器编排并保存</span><span class="en">Author and save in the designer</span></h4>
+          <p><span class="zh"><code>WorkflowDesigner</code> 画好节点图，<code>POST/PUT ops/workflows</code> 保存，必要时 <code>POST …/validate</code> 校验、<code>POST …/publish</code> 发布。</span><span class="en"><code>WorkflowDesigner</code> lays out the node graph, saves via <code>POST/PUT ops/workflows</code>, optionally <code>POST …/validate</code> to check and <code>POST …/publish</code> to publish.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">触发并在运行页看实时图</span><span class="en">Trigger and watch the live graph</span></h4>
+          <p><span class="zh"><code>POST ops/workflows/{id}/trigger</code> 触发一次运行，<code>WorkflowRuns</code> 用 <code>GET ops/runs/{run_id}/graph</code> 渲染实时运行图，点节点看 <code>…/nodes/{node_id}/logs</code>。</span><span class="en"><code>POST ops/workflows/{id}/trigger</code> starts a run; <code>WorkflowRuns</code> renders the live graph from <code>GET ops/runs/{run_id}/graph</code>, drilling into <code>…/nodes/{node_id}/logs</code> per node.</span></p>
+        </li>
+      </ol>
+
+      <h3><span class="zh">③ Caddy 路由配置</span><span class="en">③ Configure a Caddy route</span></h3>
+      <ol class="steps">
+        <li>
+          <h4><span class="zh">在路由管理里增改路由</span><span class="en">Add / edit a route in RouteManage</span></h4>
+          <p><span class="zh"><code>RouteManage</code> 通过 <code>POST/PUT caddy/routes</code> 写库——此时只改了配置数据库，<strong>尚未</strong>下发给 Caddy。</span><span class="en"><code>RouteManage</code> writes via <code>POST/PUT caddy/routes</code> — this only updates the config database, <strong>not</strong> Caddy itself yet.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">批量同步到 Caddy</span><span class="en">Sync to Caddy in one batch</span></h4>
+          <p><span class="zh"><code>POST caddy/routes/sync</code> 把所有已启用路由编译成 Caddy JSON 并经 Admin API 一次性下发，配置才真正生效。</span><span class="en"><code>POST caddy/routes/sync</code> compiles every enabled route into Caddy JSON and pushes it through the Admin API in one shot — only then does it take effect.</span></p>
+        </li>
+        <li>
+          <h4><span class="zh">在统计概览验证流量</span><span class="en">Verify traffic in StatsOverview</span></h4>
+          <p><span class="zh">在 <code>StatsOverview</code> 看新路由的实时流量与趋势，确认转发正常。</span><span class="en">Confirm the forwarding works by watching the new route's realtime traffic and trend in <code>StatsOverview</code>.</span></p>
+        </li>
+      </ol>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="workflow-api.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">工作流 · API</span><span class="en">Workflow API</span></span></a>
+      <a class="next" href="caddy.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">Caddy 网关</span><span class="en">Caddy Gateway</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

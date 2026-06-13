@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>核心概念 / Core Concepts — Cancan Microstack</title>
+<meta name="description" content="Core concepts of Cancan Microstack: the microstack facade, assets as package resources, workspace detection, fork-free overrides, and workspace-first asset fallback.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="concepts">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">核心概念</span><span class="en">Core Concepts</span></h1>
+    <p class="page-lead">
+      <span class="zh">理解 Cancan 的几个关键抽象——一旦想通它们，整套库的行为就一目了然。</span>
+      <span class="en">Understand the handful of abstractions behind Cancan — once they click, the whole library's behavior follows naturally.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#facade"><span class="zh">Microstack 门面</span><span class="en">The facade</span></a>
+      <a href="#assets"><span class="zh">资产即包资源</span><span class="en">Assets as resources</span></a>
+      <a href="#workspace"><span class="zh">工作区</span><span class="en">Workspace</span></a>
+      <a href="#overrides"><span class="zh">免 Fork 覆盖</span><span class="en">Fork-free overrides</span></a>
+      <a href="#fallback"><span class="zh">工作区优先、资产兜底</span><span class="en">Workspace-first fallback</span></a>
+      <a href="#map"><span class="zh">概念关系</span><span class="en">How they relate</span></a>
+    </div>
+
+    <section id="facade">
+      <h2><span class="zh">Microstack 门面</span><span class="en">The Microstack facade</span></h2>
+      <p class="section-sub"><span class="zh">一个对象，三件事——其余细节都被它藏在身后。</span><span class="en">One object, three jobs — everything else hides behind it.</span></p>
+      <p>
+        <span class="zh"><code>CancanMicrostack</code>（位于 <code>core/microstack.py</code>）是一个很薄的门面（Facade）。它在内部把三个子系统组合在一起——<code>AssetManager</code>、<code>ComposeBuilder</code>、<code>ServiceRunner</code>——对外只暴露三个高层方法。</span>
+        <span class="en"><code>CancanMicrostack</code> (in <code>core/microstack.py</code>) is a thin facade. Internally it composes three subsystems — <code>AssetManager</code>, <code>ComposeBuilder</code>, <code>ServiceRunner</code> — and exposes just three high-level methods.</span>
+      </p>
+      <table>
+        <thead><tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">作用</span><span class="en">What it does</span></th><th><span class="zh">委托给</span><span class="en">Delegates to</span></th></tr></thead>
+        <tbody>
+          <tr><td><code>build_compose()</code></td><td><span class="zh">合成最终 compose 栈文件。</span><span class="en">Synthesize the final compose stack file.</span></td><td><code>ComposeBuilder</code></td></tr>
+          <tr><td><code>export_asset()</code></td><td><span class="zh">把包内资产复制到工作区。</span><span class="en">Copy a packaged asset into the workspace.</span></td><td><code>AssetManager</code></td></tr>
+          <tr><td><code>run_service()</code></td><td><span class="zh">启动一个内置服务入口。</span><span class="en">Start a bundled service entrypoint.</span></td><td><code>ServiceRunner</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        <span class="zh">价值在于：CLI 和你的代码都只需要认识 <code>CancanMicrostack</code> 这一个对象，不必关心三个子系统如何拼装。</span>
+        <span class="en">The payoff: the CLI and your own code only ever need to know one object, <code>CancanMicrostack</code> — never how the three subsystems are wired together.</span>
+      </p>
+    </section>
+
+    <section id="assets">
+      <h2><span class="zh">资产即包资源</span><span class="en">Assets as package resources</span></h2>
+      <p class="section-sub"><span class="zh">compose、DDL、脚本、运维前端随库一起发布——业务仓不再复制模板。</span><span class="en">compose, DDL, scripts and the ops UI ship with the library — no more copying templates into product repos.</span></p>
+      <p>
+        <span class="zh">所谓「资产」，是 <code>cancan_microstack/assets/</code> 里随 Python 包一起发布的静态文件：docker compose 模板、DDL SQL、脚本、运维前端构建产物。<code>AssetManager</code> 用标准库 <code>importlib.resources</code> 访问它们，即使库被打成 wheel/zip 也能正确物化成真实文件路径。</span>
+        <span class="en">An "asset" is a static file shipped inside the Python package under <code>cancan_microstack/assets/</code>: docker compose templates, DDL SQL, scripts, and the ops UI build output. <code>AssetManager</code> reaches them through the standard-library <code>importlib.resources</code>, so they materialize into real filesystem paths even when the library is packaged as a wheel/zip.</span>
+      </p>
+      <p>
+        <span class="zh">每个资产用一个稳定的<strong>逻辑名</strong>引用，例如 <code>docker/docker-compose.infra.yml</code>。调用方只认逻辑名，无需知道库内部文件的真实位置。</span>
+        <span class="en">Each asset is referenced by a stable <strong>logical name</strong>, e.g. <code>docker/docker-compose.infra.yml</code>. Callers only deal with the logical name — never the file's real location inside the package.</span>
+      </p>
+      <div class="note tip">
+        <span class="zh"><strong>为什么要 export？</strong>Docker 只看得见被挂载进容器的工作区路径，不会去 venv 的 site-packages 里找文件。所以模式是「先 <code>export</code> 到工作区，再让 Docker 挂载工作区路径」，既可分发、又符合容器只读卷的权限模型。</span>
+        <span class="en"><strong>Why export at all?</strong> Docker only sees the workspace paths mounted into a container, not files buried in your venv's site-packages. So the pattern is: <code>export</code> into the workspace first, then mount the workspace path into Docker — distributable, and consistent with read-only container volumes.</span>
+      </div>
+    </section>
+
+    <section id="workspace">
+      <h2><span class="zh">工作区（workspace）</span><span class="en">The workspace</span></h2>
+      <p class="section-sub"><span class="zh">「你到底在哪个业务仓里跑」——一切相对路径与日志目录的基准。</span><span class="en">"Which product repo am I running in?" — the anchor for every relative path and log directory.</span></p>
+      <p>
+        <span class="zh">workspace root 是当前业务仓的根目录。它决定三件事：日志目录（<code>server_log_data/</code>）建在哪里、用户传入的相对路径以谁为基准、overrides 从哪里开始向上搜索。</span>
+        <span class="en">The workspace root is your product repo's root directory. It decides three things: where the log directory (<code>server_log_data/</code>) is created, what relative paths resolve against, and where the upward search for overrides begins.</span>
+      </p>
+      <p><span class="zh">定位规则（<code>runtime/workspace.py</code>）按优先级：</span><span class="en">Detection rules (<code>runtime/workspace.py</code>), in priority order:</span></p>
+      <ol>
+        <li><span class="zh">优先环境变量 <code>CANCAN_WORKSPACE_ROOT</code>，显式指定就用它。</span><span class="en">The <code>CANCAN_WORKSPACE_ROOT</code> environment variable wins if set.</span></li>
+        <li><span class="zh">否则从当前目录开始向上遍历，遇到任意<strong>标记文件/目录</strong>即认定为工作区根。</span><span class="en">Otherwise walk upward from the current directory; the first directory containing any <strong>marker</strong> is taken as the root.</span></li>
+      </ol>
+      <p>
+        <span class="zh">标记文件任意命中一个即可：</span>
+        <span class="en">Any one of these markers is enough:</span>
+        <span class="pill">server_log_data</span><span class="pill">cmd</span><span class="pill">docker-compose.infra.yml</span><span class="pill">docker-compose.services.yml</span><span class="pill">pyproject.toml</span><span class="pill">requirements.txt</span>
+      </p>
+      <p class="muted">
+        <span class="zh">这正是它能在一个典型业务仓里「自动找到根目录」的原因——大多数项目至少有 <code>pyproject.toml</code> 或 <code>requirements.txt</code>。</span>
+        <span class="en">This is exactly why it can "find the root automatically" in a typical repo — most projects have at least a <code>pyproject.toml</code> or <code>requirements.txt</code>.</span>
+      </p>
+    </section>
+
+    <section id="overrides">
+      <h2><span class="zh">免 Fork 覆盖（overrides）</span><span class="en">Fork-free overrides</span></h2>
+      <p class="section-sub"><span class="zh">只替换你想改的几个文件，其余仍复用库实现——不必 fork 主库。</span><span class="en">Replace only the few files you want to change; the rest still comes from the library — no fork required.</span></p>
+      <p>
+        <span class="zh">在工作区放一个 <code>cancan_overrides/&lt;service&gt;/</code> 目录，只放你要替换的文件。运行时（<code>runtime/overrides.py</code>）用 <code>pkgutil.extend_path</code> 把该目录插到对应服务包搜索路径的<strong>最前面</strong>：import 时命中你的文件就用你的，否则回退到库自带实现。</span>
+        <span class="en">Drop a <code>cancan_overrides/&lt;service&gt;/</code> directory in your workspace containing only the files you want to replace. At runtime (<code>runtime/overrides.py</code>) <code>pkgutil.extend_path</code> prepends that directory to the service package's search path: on import, your file is used if present, otherwise it falls back to the library's implementation.</span>
+      </p>
+      <p>
+        <span class="zh">覆盖目录的发现也走两级：环境变量 <code>CANCAN_OVERRIDE_ROOT</code> 优先，否则从工作区向上寻找名为 <code>cancan_overrides/</code> 的目录。</span>
+        <span class="en">Discovery is two-tier as well: the <code>CANCAN_OVERRIDE_ROOT</code> environment variable takes priority, otherwise the loader searches upward from the workspace for a <code>cancan_overrides/</code> directory.</span>
+      </p>
+      <h4><span class="zh">目录树示例</span><span class="en">Directory layout</span></h4>
+      <pre><code>my-product-repo/
+├── pyproject.toml              <span class="tok-c"># workspace 标记 / workspace marker</span>
+├── docker-compose.services.yml
+├── cancan_overrides/           <span class="tok-c"># 覆盖根 / override root</span>
+│   └── infrasrv/               <span class="tok-c"># 只覆盖 infrasrv / overrides for infrasrv only</span>
+│       └── config/
+│           └── settings.py     <span class="tok-c"># 命中你的；其余回退库 / yours wins; rest falls back</span>
+└── server_log_data/</code></pre>
+      <p class="muted">
+        <span class="zh">这是典型的「插件 / 覆盖」机制：覆盖目录只需放被改的文件，未覆盖部分完全复用库本身。</span>
+        <span class="en">This is the classic plugin/override pattern: the override directory holds only the changed files; everything untouched still comes straight from the library.</span>
+      </p>
+    </section>
+
+    <section id="fallback">
+      <h2><span class="zh">工作区优先、资产兜底</span><span class="en">Workspace-first, asset fallback</span></h2>
+      <p class="section-sub"><span class="zh">同名文件放工作区就用本地，否则用包内资产——一条规则贯穿配置解析。</span><span class="en">A same-named file in the workspace wins; otherwise the packaged asset is used — one rule across config resolution.</span></p>
+      <p>
+        <span class="zh"><code>resolve_workspace_or_asset(relative_path, asset_logical)</code>（<code>runtime/resources.py</code>）的规则非常直接：先看 <code>&lt;workspace_root&gt;/&lt;relative_path&gt;</code> 是否存在，存在就用工作区文件，不存在才回退到包内资产 <code>AssetManager.resolve_path(asset_logical)</code>。</span>
+        <span class="en"><code>resolve_workspace_or_asset(relative_path, asset_logical)</code> (<code>runtime/resources.py</code>) is wonderfully direct: check whether <code>&lt;workspace_root&gt;/&lt;relative_path&gt;</code> exists; if it does, use the workspace file; only otherwise fall back to the packaged asset via <code>AssetManager.resolve_path(asset_logical)</code>.</span>
+      </p>
+      <p>
+        <span class="zh">这让业务仓「放一个同名配置文件就能覆盖默认资产」，无需改动任何库代码。它和 overrides 是互补的两层：overrides 覆盖<strong>代码模块</strong>，本机制覆盖<strong>配置 / 资产文件</strong>。</span>
+        <span class="en">This lets a repo "drop a same-named config file to override the default asset" without touching library code. It complements overrides as a second layer: overrides replace <strong>code modules</strong>, while this mechanism replaces <strong>config / asset files</strong>.</span>
+      </p>
+    </section>
+
+    <section id="map" style="border-bottom:none">
+      <h2><span class="zh">概念关系</span><span class="en">How they relate</span></h2>
+      <p class="section-sub"><span class="zh">core 提供能力，runtime 决定在业务仓里如何落地。</span><span class="en">core provides the capabilities; runtime decides how they land inside your repo.</span></p>
+      <div class="diagram">
+        <div class="arch-row">
+          <div class="arch-box accent"><div class="t">CancanMicrostack</div><div class="d"><span class="zh">门面 / facade</span><span class="en">facade</span></div></div>
+        </div>
+        <div class="arch-arrow">▼</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">AssetManager</div><div class="d"><span class="zh">资产 / assets</span><span class="en">assets</span></div></div>
+          <div class="arch-box"><div class="t">ComposeBuilder</div><div class="d"><span class="zh">合成 / synth</span><span class="en">synthesis</span></div></div>
+          <div class="arch-box"><div class="t">ServiceRunner</div><div class="d"><span class="zh">运行 / run</span><span class="en">run</span></div></div>
+        </div>
+        <div class="arch-arrow">▼</div>
+        <div class="arch-row">
+          <div class="arch-box"><div class="t">workspace</div><div class="d"><span class="zh">定位根目录</span><span class="en">locate root</span></div></div>
+          <div class="arch-box"><div class="t">overrides</div><div class="d"><span class="zh">覆盖代码</span><span class="en">override code</span></div></div>
+          <div class="arch-box"><div class="t">resources</div><div class="d"><span class="zh">优先 / 兜底</span><span class="en">prefer / fallback</span></div></div>
+        </div>
+      </div>
+      <p class="muted">
+        <span class="zh">上层是 <code>core</code> 的三类能力，下层是 <code>runtime</code> 的三种策略；服务启动前会先做 bootstrap，把 workspace 与 overrides 一次性配置好。</span>
+        <span class="en">The upper row is <code>core</code>'s three capabilities; the lower row is <code>runtime</code>'s three strategies. Before any service starts, a bootstrap step configures the workspace and overrides together.</span>
+      </p>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="quickstart.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">快速开始</span><span class="en">Quick Start</span></span></a>
+      <a class="next" href="architecture.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">总体架构</span><span class="en">Architecture</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>

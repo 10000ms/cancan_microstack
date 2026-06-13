@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据模型 / Data Model — Cancan Microstack</title>
+<meta name="description" content="Data model of Cancan Microstack: 19 tables across two PostgreSQL databases (infra and ops) — service registry, workflow engine and Caddy gateway management.">
+<link rel="stylesheet" href="doc.css">
+</head>
+<body class="lang-zh" data-page="data-model">
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+  <div class="inner">
+
+    <h1 class="page-title"><span class="zh">数据模型</span><span class="en">Data Model</span></h1>
+    <p class="page-lead">
+      <span class="zh"><code>infra</code> 与 <code>ops</code> 两个 PostgreSQL 库共 19 张表：前者承载服务注册与工作流引擎，后者承载运维控制面与 Caddy 网关。</span>
+      <span class="en">Nineteen tables across two PostgreSQL databases — <code>infra</code> carries the service registry and workflow engine, while <code>ops</code> carries the operations control plane and the Caddy gateway.</span>
+    </p>
+
+    <div class="onthispage">
+      <div class="h"><span class="zh">本页内容</span><span class="en">On this page</span></div>
+      <a href="#conventions"><span class="zh">通用约定</span><span class="en">Conventions</span></a>
+      <a href="#infra"><span class="zh">infra 库</span><span class="en">infra database</span></a>
+      <a href="#ops"><span class="zh">ops 库</span><span class="en">ops database</span></a>
+    </div>
+
+    <section id="conventions">
+      <h2><span class="zh">通用约定</span><span class="en">Shared conventions</span></h2>
+      <p class="section-sub"><span class="zh">先理解所有表共有的标准字段与初始化方式，下面的表格只列各自的关键业务字段。</span><span class="en">Understand the standard fields and initialization model shared by every table; the tables below list only each one's key business columns.</span></p>
+      <div class="note">
+        <span class="zh"><strong>标准字段。</strong>每张表都带三个标准字段：<code>flag</code>（<code>SMALLINT</code>，<code>0</code>=正常、<code>1</code>=软删，业务删除走 <code>flag</code> 而非物理删除）、<code>created_time</code>（创建时间）与 <code>update_time</code>（最后更新时间）。每张表都挂了一个 <code>BEFORE UPDATE</code> 触发器，行更新时自动把 <code>update_time</code> 刷成 <code>CURRENT_TIMESTAMP</code>，无需应用层维护。表的 DDL 随服务启动由 <code>DDLManager</code> 自动初始化——脚本目录来自 <code>DDL_SCRIPT_PATH</code>（默认指向库内置的 <code>ddl/infra</code> 与 <code>ddl/ops</code> 资产，可被工作区覆盖）。</span>
+        <span class="en"><strong>Standard fields.</strong> Every table carries three standard columns: <code>flag</code> (<code>SMALLINT</code>, <code>0</code> = active, <code>1</code> = soft-deleted — deletes set <code>flag</code> instead of removing the row), <code>created_time</code>, and <code>update_time</code>. Each table also has a <code>BEFORE UPDATE</code> trigger that automatically refreshes <code>update_time</code> to <code>CURRENT_TIMESTAMP</code> on every row update, so the application never maintains it by hand. Table DDL is initialized automatically by <code>DDLManager</code> on service startup — the script directory comes from <code>DDL_SCRIPT_PATH</code> (which defaults to the bundled <code>ddl/infra</code> and <code>ddl/ops</code> assets and can be overridden from the workspace).</span>
+      </div>
+      <p>
+        <span class="zh">下面表格的<strong>关键字段</strong>列只挑选业务上最有信息量的列，省略了主键 <code>id</code> 与上述三个标准字段。多数业务列用 <code>JSONB</code> 存放可扩展的结构化数据（如元数据、配置、上下文、快照）。</span>
+        <span class="en">The <strong>key fields</strong> column below highlights the most informative business columns only; it omits the <code>id</code> primary key and the three standard fields above. Many business columns use <code>JSONB</code> to hold extensible structured data (metadata, config, context, snapshots).</span>
+      </p>
+    </section>
+
+    <section id="infra">
+      <h2><span class="zh">infra 库 — 服务注册与工作流引擎</span><span class="en">infra database — registry &amp; workflow engine</span></h2>
+      <p class="section-sub"><span class="zh">11 张表：前 5 张围绕服务/实例/配置/操作/行为审计，后 6 张构成工作流引擎的定义、版本、运行、节点、执行日志与告警。</span><span class="en">Eleven tables: the first five cover services / instances / config / operations / action audit; the last six form the workflow engine — definition, version, run, node, execution log and alerts.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">表名</span><span class="en">Table</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>service_info_tbl</code></td>
+            <td><span class="zh">服务元信息与期望规模：每个服务一条记录，记录健康检查路径、期望/实际副本数与扩缩容策略。</span><span class="en">Service metadata and desired scale: one row per service, with health-check path, desired/actual replica counts and scale policy.</span></td>
+            <td><code>service_name</code>, <code>service_type</code>, <code>health_check_path</code>, <code>expected_status</code>, <code>desired_replicas</code>, <code>actual_replicas</code>, <code>scale_policy</code>, <code>service_metadata</code></td>
+          </tr>
+          <tr>
+            <td><code>service_instance_tbl</code></td>
+            <td><span class="zh">服务实例运行态：每个容器/进程实例一条，记录地址端口、运行状态、健康状态、心跳与失败计数。</span><span class="en">Per-instance runtime state: one row per container/process instance with address, status, health, heartbeat and failure counts.</span></td>
+            <td><code>instance_id</code>, <code>service_name</code>, <code>host</code>, <code>port</code>, <code>status</code>, <code>health_status</code>, <code>last_heartbeat</code>, <code>consecutive_failures</code>, <code>restart_count</code></td>
+          </tr>
+          <tr>
+            <td><code>service_config_tbl</code></td>
+            <td><span class="zh">服务级键值配置：按 <code>(service_name, conf_key)</code> 唯一存放可下发的运行时配置项。</span><span class="en">Service-level key/value config: pushable runtime settings, unique on <code>(service_name, conf_key)</code>.</span></td>
+            <td><code>service_name</code>, <code>conf_key</code>, <code>conf_value</code></td>
+          </tr>
+          <tr>
+            <td><code>service_operation_tbl</code></td>
+            <td><span class="zh">异步操作记录：start/stop/restart 等操作的状态机、入参、结果与重试，按 <code>operation_id</code> 唯一。</span><span class="en">Async operation records: the state machine, params, result and retries of start/stop/restart operations, unique on <code>operation_id</code>.</span></td>
+            <td><code>operation_id</code>, <code>operation_type</code>, <code>service_name</code>, <code>status</code>, <code>operation_params</code>, <code>result</code>, <code>retry_count</code>, <code>max_retries</code>, <code>initiated_by</code></td>
+          </tr>
+          <tr>
+            <td><code>service_action_log_tbl</code></td>
+            <td><span class="zh">服务行为审计日志：记录注册、注销、心跳、健康失败、重启、扩缩容、重建等关键动作。</span><span class="en">Service action audit log: register, deregister, heartbeat, health-check failures, restart, scale and rebuild events.</span></td>
+            <td><code>service_name</code>, <code>instance_id</code>, <code>action_type</code>, <code>action_status</code>, <code>action_detail</code>, <code>error_message</code>, <code>triggered_by</code></td>
+          </tr>
+          <tr>
+            <td><code>workflow_definition_tbl</code></td>
+            <td><span class="zh">工作流定义：工作流的静态结构与配置，含画布数据、扁平节点 Map、Cron 计划、启用开关与版本号。主键为 <code>UUID</code>。</span><span class="en">Workflow definition: the static structure and config — graph data, a flattened node map, a Cron schedule, an active toggle and a version number. <code>UUID</code> primary key.</span></td>
+            <td><code>name</code>, <code>schedule</code>, <code>graph_data</code>, <code>nodes_config</code>, <code>global_context</code>, <code>is_active</code>, <code>version</code>, <code>change_summary</code></td>
+          </tr>
+          <tr>
+            <td><code>workflow_definition_version_tbl</code></td>
+            <td><span class="zh">工作流版本快照：每次发布或回滚后保留一份定义快照，按 <code>(workflow_id, version)</code> 唯一，引用定义表。</span><span class="en">Workflow version snapshot: a definition snapshot kept after each publish or rollback, unique on <code>(workflow_id, version)</code>, referencing the definition table.</span></td>
+            <td><code>workflow_id</code>, <code>version</code>, <code>name</code>, <code>schedule</code>, <code>graph_data</code>, <code>nodes_config</code>, <code>change_summary</code></td>
+          </tr>
+          <tr>
+            <td><code>workflow_run_tbl</code></td>
+            <td><span class="zh">工作流运行实例：一次执行一条，记录触发来源、运行状态、全局上下文，并固化触发时的定义版本与快照以保证运行不可变。</span><span class="en">Workflow run instance: one row per execution, capturing trigger source, run status, global context, plus the definition version and snapshot taken at trigger time to keep runs immutable.</span></td>
+            <td><code>workflow_id</code>, <code>status</code>, <code>trigger_type</code>, <code>trigger_context</code>, <code>global_context</code>, <code>definition_version</code>, <code>definition_snapshot</code>, <code>started_at</code>, <code>finished_at</code>, <code>duration_ms</code></td>
+          </tr>
+          <tr>
+            <td><code>node_instance_tbl</code></td>
+            <td><span class="zh">节点运行实例：记录一次运行中每个节点（含循环轮次）的状态、入参与产出，按 <code>(run_id, node_id, loop_index)</code> 唯一。</span><span class="en">Node run instance: per-node state (with loop iteration), input and output within a run, unique on <code>(run_id, node_id, loop_index)</code>.</span></td>
+            <td><code>run_id</code>, <code>node_id</code>, <code>loop_index</code>, <code>status</code>, <code>input_data</code>, <code>final_output</code>, <code>attempt_count</code>, <code>error_msg</code></td>
+          </tr>
+          <tr>
+            <td><code>execution_log_tbl</code></td>
+            <td><span class="zh">执行审计日志：节点实例的每一次尝试一条，保存请求/响应快照、结果状态与耗时。</span><span class="en">Execution audit log: one row per attempt of a node instance, with request/response snapshots, result status and duration.</span></td>
+            <td><code>node_instance_id</code>, <code>attempt_no</code>, <code>request_snapshot</code>, <code>response_snapshot</code>, <code>status</code>, <code>error_detail</code>, <code>start_time</code>, <code>end_time</code>, <code>duration_ms</code></td>
+          </tr>
+          <tr>
+            <td><code>workflow_engine_alert_tbl</code></td>
+            <td><span class="zh">工作流引擎告警：运行中产生的告警，含严重级别、分类、确认与解决的状态机。</span><span class="en">Workflow engine alerts: alerts raised during runs, with severity, category and an acknowledge/resolve state machine.</span></td>
+            <td><code>run_id</code>, <code>node_id</code>, <code>loop_index</code>, <code>severity</code>, <code>category</code>, <code>reason</code>, <code>detail</code>, <code>status</code>, <code>acknowledged_by</code>, <code>resolved_by</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note tip">
+        <span class="zh">工作流五表自上而下构成一条引用链：<code>workflow_definition_tbl</code> → <code>workflow_run_tbl</code> → <code>node_instance_tbl</code> → <code>execution_log_tbl</code>；告警与版本快照分别旁挂在 run 与 definition 上。节点类型见 <code>nodes_config</code>：<code>START / ACTION / TRANSFORM / LOGIC / FORK / JOIN / LOOP / END</code>。</span>
+        <span class="en">The five workflow tables form a top-down reference chain: <code>workflow_definition_tbl</code> → <code>workflow_run_tbl</code> → <code>node_instance_tbl</code> → <code>execution_log_tbl</code>; alerts and version snapshots hang off the run and the definition respectively. Node types live in <code>nodes_config</code>: <code>START / ACTION / TRANSFORM / LOGIC / FORK / JOIN / LOOP / END</code>.</span>
+      </div>
+    </section>
+
+    <section id="ops" style="border-bottom:none">
+      <h2><span class="zh">ops 库 — 运维控制面与 Caddy 网关</span><span class="en">ops database — control plane &amp; Caddy gateway</span></h2>
+      <p class="section-sub"><span class="zh">6 张表：1 张运维后台用户表，5 张 Caddy 网关管理表（路由、限流、证书、统计、访问日志）。</span><span class="en">Six tables: one ops admin user table, plus five Caddy gateway tables — routes, rate limits, certificates, stats and access logs.</span></p>
+      <table>
+        <thead><tr>
+          <th><span class="zh">表名</span><span class="en">Table</span></th>
+          <th><span class="zh">用途</span><span class="en">Purpose</span></th>
+          <th><span class="zh">关键字段</span><span class="en">Key fields</span></th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><code>admin_user_tbl</code></td>
+            <td><span class="zh">运维后台用户：登录凭证与 TOTP 双因子绑定状态，<code>username</code> 唯一。</span><span class="en">Ops admin users: login credentials and TOTP two-factor binding state, unique on <code>username</code>.</span></td>
+            <td><code>username</code>, <code>password_hash</code>, <code>totp_secret_encrypted</code>, <code>totp_bound</code></td>
+          </tr>
+          <tr>
+            <td><code>caddy_route_tbl</code></td>
+            <td><span class="zh">网关路由：域名 + 路径 → 上游服务的映射，含 HTTPS、WAF、负载均衡、健康检查与优先级配置，<code>route_name</code> 唯一。</span><span class="en">Gateway routes: domain + path → upstream mapping, with HTTPS, WAF, load-balancing, health-check and priority settings, unique on <code>route_name</code>.</span></td>
+            <td><code>route_name</code>, <code>domain</code>, <code>path_pattern</code>, <code>upstream_service</code>, <code>upstream_host</code>, <code>upstream_port</code>, <code>enable_https</code>, <code>enable_waf</code>, <code>load_balance_strategy</code>, <code>priority</code>, <code>is_enabled</code></td>
+          </tr>
+          <tr>
+            <td><code>caddy_rate_limit_tbl</code></td>
+            <td><span class="zh">限流规则：按匹配条件限制请求速率，含限流窗口、突发额度、阻断响应与 IP 黑白名单，<code>rule_name</code> 唯一。</span><span class="en">Rate-limit rules: throttle requests by match criteria, with window, burst size, block response and IP allow/deny lists, unique on <code>rule_name</code>.</span></td>
+            <td><code>rule_name</code>, <code>match_type</code>, <code>match_pattern</code>, <code>limit_type</code>, <code>limit_value</code>, <code>limit_window</code>, <code>limit_key</code>, <code>burst_size</code>, <code>block_status_code</code>, <code>whitelist_ips</code>, <code>blacklist_ips</code>, <code>is_enabled</code></td>
+          </tr>
+          <tr>
+            <td><code>caddy_certificate_tbl</code></td>
+            <td><span class="zh">TLS 证书：域名证书与私钥，含有效期、ACME 自动签发/续订配置与续订状态，<code>domain</code> 唯一。</span><span class="en">TLS certificates: per-domain cert and key, with validity window, ACME auto-issue/renew config and renewal state, unique on <code>domain</code>.</span></td>
+            <td><code>domain</code>, <code>alt_domains</code>, <code>certificate_pem</code>, <code>private_key_pem</code>, <code>issuer</code>, <code>issued_at</code>, <code>expires_at</code>, <code>auto_renew</code>, <code>renew_before_days</code>, <code>status</code>, <code>acme_provider</code>, <code>acme_challenge_type</code></td>
+          </tr>
+          <tr>
+            <td><code>caddy_stats_tbl</code></td>
+            <td><span class="zh">网关统计聚合：按时间窗口与维度聚合请求量、流量、响应时延分位、WAF/限流/TLS 计数，唯一索引防重复聚合。</span><span class="en">Gateway stats rollups: requests, bytes, response-time percentiles and WAF/rate-limit/TLS counts aggregated by time window and dimension; a unique index prevents duplicate rollups.</span></td>
+            <td><code>stat_time</code>, <code>stat_period</code>, <code>dimension_type</code>, <code>dimension_value</code>, <code>total_requests</code>, <code>success_requests</code>, <code>server_error_requests</code>, <code>avg_response_time</code>, <code>p95_response_time</code>, <code>p99_response_time</code>, <code>waf_blocked_requests</code>, <code>rate_limited_requests</code>, <code>unique_ips</code></td>
+          </tr>
+          <tr>
+            <td><code>caddy_access_log_tbl</code></td>
+            <td><span class="zh">网关访问日志：逐请求明细，含客户端与 GeoIP 地理信息、请求/响应、匹配路由与上游、WAF/限流/TLS 字段，<code>request_id</code> 唯一。</span><span class="en">Gateway access log: per-request detail with client and GeoIP geo data, request/response, matched route and upstream, plus WAF/rate-limit/TLS fields, unique on <code>request_id</code>.</span></td>
+            <td><code>request_id</code>, <code>timestamp</code>, <code>client_ip</code>, <code>country</code>, <code>method</code>, <code>host</code>, <code>path</code>, <code>matched_route</code>, <code>upstream_service</code>, <code>status_code</code>, <code>response_time</code>, <code>waf_action</code>, <code>rate_limited</code>, <code>tls_version</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="pager">
+      <a class="prev" href="logging.html"><span class="lbl"><span class="zh">上一页</span><span class="en">Previous</span></span><span class="ttl"><span class="zh">日志管道</span><span class="en">Logging Pipeline</span></span></a>
+      <a class="next" href="api-reference.html"><span class="lbl"><span class="zh">下一页</span><span class="en">Next</span></span><span class="ttl"><span class="zh">API 索引</span><span class="en">API Index</span></span></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<footer>
+  <p>Cancan Microstack · MIT License © 2026 Victor Lai ·
+    <a href="https://github.com/10000ms/cancan_microstack" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="https://pypi.org/project/cancan-microstack/" target="_blank" rel="noopener">PyPI</a>
+  </p>
+</footer>
+<script src="nav.js"></script>
+</body>
+</html>
