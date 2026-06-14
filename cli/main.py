@@ -31,7 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
     compose_sub = compose_parser.add_subparsers(dest="compose_command", required=True)
     build_parser = compose_sub.add_parser("build", help="Generate merged compose stack")
     build_parser.add_argument("--workspace", default=".", help="Workspace root (default: current directory)")
-    build_parser.add_argument("--service-file", help="Optional service compose file from workspace")
+    build_parser.add_argument(
+        "--service-file",
+        default="docker-compose.services.yml",
+        help="Business compose file merged into the stack (default: docker-compose.services.yml; "
+             "ignored if absent). Pass an empty string to skip.",
+    )
     build_parser.add_argument("--override", action="append", default=[], help="Additional override compose files")
     build_parser.add_argument("--output", help="Target compose file path (default: compose.cancan.yml)")
     build_parser.add_argument(

@@ -40,6 +40,9 @@ class LoginResponse(BaseModel):
 class CaptchaResponse(BaseModel):
     captcha_id: str
     image_base64: str
+    # 密码预哈希盐（公开的部署级 pepper），前端据此 sha256(salt + 明文) 后再提交。
+    # Password pre-hash salt (public per-deployment pepper); the frontend submits sha256(salt + raw).
+    password_salt: str
 
 
 class TotpSetupResponse(BaseModel):
@@ -94,7 +97,12 @@ async def get_captcha() -> CaptchaResponse:
     captcha_id, answer, image_base64 = captcha_service.generate_captcha()
     captcha_ttl = int(LinglongConfig.get("AUTH_CAPTCHA_TTL", 60))
     await redis_store.save_captcha(captcha_id, answer, ttl=captcha_ttl)
-    return CaptchaResponse(captcha_id=captcha_id, image_base64=image_base64)
+    password_salt = str(LinglongConfig.get("AUTH_PASSWORD_HASH_SALT", ""))
+    return CaptchaResponse(
+        captcha_id=captcha_id,
+        image_base64=image_base64,
+        password_salt=password_salt,
+    )
 
 
 async def login(req: LoginRequest, client_ip: str) -> LoginResponse:

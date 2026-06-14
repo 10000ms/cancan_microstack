@@ -4,6 +4,7 @@
 Deep-merge infra compose with service/override files to produce a runnable stack.
 """
 import copy
+import sys
 from pathlib import Path
 from typing import (
     Any,
@@ -41,8 +42,17 @@ class ComposeBuilder:
 
         base_model = self._load_asset_yaml(self.base_asset)
         merged = base_model
-        if service_file and service_file.exists():
-            merged = self._deep_merge(merged, self._load_yaml(service_file))
+        if service_file:
+            if service_file.exists():
+                merged = self._deep_merge(merged, self._load_yaml(service_file))
+            else:
+                # 不静默丢弃：业务服务文件缺失会让生成的栈只有基础设施、没有应用服务。
+                # Never drop silently: a missing service file yields an infra-only stack (no app services).
+                print(
+                    f"[cancan] WARNING: service file not found, generated stack will have NO business "
+                    f"services: {service_file}",
+                    file=sys.stderr,
+                )
 
         for override in overrides:
             if override.exists():
@@ -70,10 +80,46 @@ class ComposeBuilder:
                 if isinstance(svc_cfg, dict) and "build" in svc_cfg:
                     svc_cfg.setdefault("pull_policy", "never")
 
+        # 给 CANCAN_VERSION 构建参数烤入默认值（= 当前包版本），让生成的 compose 自给自足：
+        # 即便不经 `cancan stack up`、直接 `docker/podman compose up` 也能成功插值，无需手动设环境变量。
+        # Bake a default (= current package version) into the CANCAN_VERSION build-arg so the generated
+        # compose is self-contained: plain `docker/podman compose up` interpolates without any extra env.
+        self._apply_cancan_version_default(merged)
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8") as fp:
             yaml.safe_dump(merged, fp, sort_keys=False)
         return output_path
+
+    def _apply_cancan_version_default(self, merged: Dict[str, Any]) -> None:
+        """把 CANCAN_VERSION 构建参数改成带默认值的插值形式 ``${CANCAN_VERSION:-<pkg version>}``。
+        Rewrite the CANCAN_VERSION build-arg to ``${CANCAN_VERSION:-<pkg version>}`` (with a default).
+
+        默认值取当前安装的 cancan 包版本，因此即使调用方没设 CANCAN_VERSION 环境变量、
+        直接用 docker/podman compose 起栈也能插值成功；显式设置时仍可覆盖。
+        The default is the installed cancan version, so plain compose up works without the env var,
+        while an explicit CANCAN_VERSION still overrides it.
+        """
+        from cancan_microstack.__version__ import __version__ as cancan_version
+
+        default_expr = f"${{CANCAN_VERSION:-{cancan_version}}}"
+
+        def _patch_args(container: Any) -> None:
+            if isinstance(container, dict):
+                args = container.get("args")
+                if isinstance(args, dict) and "CANCAN_VERSION" in args:
+                    args["CANCAN_VERSION"] = default_expr
+
+        # 顶层 build 锚点（x-python-service-build 等）/ top-level build anchors
+        for key, value in merged.items():
+            if isinstance(key, str) and key.startswith("x-"):
+                _patch_args(value)
+        # 各服务的 build 段 / per-service build sections
+        services = merged.get("services")
+        if isinstance(services, dict):
+            for svc_cfg in services.values():
+                if isinstance(svc_cfg, dict):
+                    _patch_args(svc_cfg.get("build"))
 
     def _load_yaml(self, path: Path) -> Dict[str, Any]:
         with path.open("r", encoding="utf-8") as fp:

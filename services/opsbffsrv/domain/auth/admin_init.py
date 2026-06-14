@@ -1,9 +1,13 @@
 """admin 用户初始化 / Admin user initialization on startup."""
 from nanoid import generate as nanoid_generate
 
+from linglong_web import LinglongConfig
 from linglong_web.utils import logger
 
-from cancan_microstack.services.opsbffsrv.infrastructure.auth.password_service import hash_password
+from cancan_microstack.services.opsbffsrv.infrastructure.auth.password_service import (
+    client_password_hash,
+    hash_password,
+)
 from cancan_microstack.services.opsbffsrv.infrastructure.db.operate.admin_user_operate import (
     create_admin_user,
     get_admin_user,
@@ -18,7 +22,12 @@ async def ensure_admin_user() -> None:
         return
 
     plain_password = nanoid_generate(size=10)
-    hashed = hash_password(plain_password)
+    # 入库与前端登录口径一致：存 bcrypt(sha256(salt + 明文))，而非 bcrypt(明文)。
+    # 用户照常拿到下面打印的“明文”，浏览器登录时会自行 sha256(salt + 明文) 再发。
+    # Match the frontend login scheme: store bcrypt(sha256(salt + raw)), not bcrypt(raw). The operator
+    # still uses the raw password printed below; the browser hashes it with the same salt at login.
+    salt = str(LinglongConfig.get("AUTH_PASSWORD_HASH_SALT", ""))
+    hashed = hash_password(client_password_hash(plain_password, salt))
     await create_admin_user("admin", hashed)
 
     # 安全：初始密码绝不写入文件 logger（server_log_data 是宿主挂载，会落盘泄露）。

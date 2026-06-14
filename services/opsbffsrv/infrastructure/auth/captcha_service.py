@@ -56,29 +56,52 @@ def generate_captcha() -> tuple[str, str, str]:
     image = Image.new("RGB", (_IMG_WIDTH, _IMG_HEIGHT), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
 
-    font = _load_captcha_font(_FONT_SIZE)
+    # 底噪：先铺一层背景噪点，字符压在其上 / lay a base layer of noise under the glyphs
+    for _ in range(random.randint(120, 180)):
+        x, y = random.randint(0, _IMG_WIDTH - 1), random.randint(0, _IMG_HEIGHT - 1)
+        color = (random.randint(150, 220), random.randint(150, 220), random.randint(150, 220))
+        draw.point((x, y), fill=color)
 
-    # 绘制字符（更大字号 + 均匀分布 + 随机偏移和颜色）
-    # Draw the characters with a larger font, even spacing, and slight jitter.
+    # 逐字符绘制：每字独立成层、随机旋转后贴回。
+    # 旋转是最有效又几乎不影响人眼识别的抗 OCR 手段——字符不再水平等高，整段切分识别失效。
+    # Render each glyph on its own layer, rotate it, then paste back. Per-glyph rotation is the
+    # single most effective anti-OCR measure that still stays fully human-readable.
     char_gap = (_IMG_WIDTH - 24) // _CAPTCHA_LENGTH
     x_offset = 14
     for ch in answer:
-        color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
-        y_offset = random.randint(2, 14)
-        draw.text((x_offset, y_offset), ch, fill=color, font=font)
+        # 字号轻微抖动，破坏等宽等高规律 / jitter size to break uniform glyph metrics
+        glyph_font = _load_captcha_font(_FONT_SIZE + random.randint(-4, 6))
+        color = (random.randint(0, 110), random.randint(0, 110), random.randint(0, 110))
+
+        tile = Image.new("RGBA", (_FONT_SIZE + 28, _IMG_HEIGHT), (255, 255, 255, 0))
+        ImageDraw.Draw(tile).text((6, 4), ch, fill=color, font=glyph_font)
+        tile = tile.rotate(random.randint(-30, 30), resample=Image.BICUBIC, expand=False)
+
+        y_offset = random.randint(-2, 10)
+        image.paste(tile, (x_offset, y_offset), tile)
         x_offset += char_gap
 
-    # 绘制干扰线
-    for _ in range(5):
+    # 干扰线：更多、粗细不一、贯穿字符 / more interference lines, varied width, crossing glyphs
+    for _ in range(random.randint(8, 11)):
         x1, y1 = random.randint(0, _IMG_WIDTH), random.randint(0, _IMG_HEIGHT)
         x2, y2 = random.randint(0, _IMG_WIDTH), random.randint(0, _IMG_HEIGHT)
-        color = (random.randint(100, 200), random.randint(100, 200), random.randint(100, 200))
-        draw.line([(x1, y1), (x2, y2)], fill=color, width=1)
+        color = (random.randint(80, 190), random.randint(80, 190), random.randint(80, 190))
+        draw.line([(x1, y1), (x2, y2)], fill=color, width=random.randint(1, 3))
 
-    # 绘制噪点
-    for _ in range(100):
+    # 干扰圆弧：破坏"直线滤波 + 切字"类去噪 / arcs to defeat straight-line denoising
+    for _ in range(random.randint(2, 4)):
+        ax1 = random.randint(-30, 40)
+        ay1 = random.randint(-20, 30)
+        ax2 = ax1 + random.randint(_IMG_WIDTH // 2, _IMG_WIDTH)
+        ay2 = ay1 + random.randint(_IMG_HEIGHT // 2, _IMG_HEIGHT)
+        start, end = random.randint(0, 150), random.randint(200, 360)
+        color = (random.randint(80, 190), random.randint(80, 190), random.randint(80, 190))
+        draw.arc([(ax1, ay1), (ax2, ay2)], start, end, fill=color, width=random.randint(1, 2))
+
+    # 前景噪点：覆于字符之上，进一步打散轮廓 / dense foreground noise over the glyphs
+    for _ in range(random.randint(160, 220)):
         x, y = random.randint(0, _IMG_WIDTH - 1), random.randint(0, _IMG_HEIGHT - 1)
-        color = (random.randint(100, 200), random.randint(100, 200), random.randint(100, 200))
+        color = (random.randint(60, 200), random.randint(60, 200), random.randint(60, 200))
         draw.point((x, y), fill=color)
 
     buf = io.BytesIO()

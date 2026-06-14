@@ -142,6 +142,16 @@ class _BaseConfig(LinglongConfigBase):
     AUTH_TOTP_ISSUER = os.getenv("AUTH_TOTP_ISSUER", "OPS Admin")
     AUTH_REDIS_URL = os.getenv("AUTH_REDIS_URL", "redis://redis.internal:6379/0")
 
+    # 密码预哈希盐（前后端共用）/ Password pre-hash salt (shared by frontend & backend).
+    # 前端登录前发送 sha256(salt + 明文) 而非明文；本值由验证码接口下发给前端，二者口径一致。
+    # 它是公开的部署级 pepper（client-side 哈希盐本就随前端公开），不是机密；其价值在于真实明文
+    # 不出浏览器/不进日志，且每个部署应配置不同值，使一处的 hash 无法重放到另一部署。
+    # The frontend sends sha256(salt + raw) instead of the raw password; this value is served to the
+    # frontend by the captcha endpoint so both sides agree. It is a PUBLIC per-deployment pepper (a
+    # client-side hashing salt ships to the browser by nature, not a secret). Configure a DISTINCT
+    # value per deployment so a hash from one deployment cannot be replayed against another.
+    AUTH_PASSWORD_HASH_SALT = os.getenv("AUTH_PASSWORD_HASH_SALT", "cancan-microstack-default-pwd-salt")
+
     # 代理接口跨域白名单（逗号分隔的 Origin），默认空 = 仅同源。
     # 用于 RabbitMQ 等管理 UI 代理；绝不反射任意 Origin + 带凭证。
     # Allowlist of cross-origin Origins for proxy endpoints (comma-separated).
