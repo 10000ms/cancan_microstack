@@ -11,8 +11,32 @@ from PIL import Image, ImageDraw, ImageFont
 # 排除易混淆字符 0/O/I/1
 _CHARS = "".join(c for c in string.ascii_uppercase + string.digits if c not in "OI01")
 _CAPTCHA_LENGTH = 6
-_IMG_WIDTH = 200
-_IMG_HEIGHT = 60
+_IMG_WIDTH = 220
+_IMG_HEIGHT = 72
+_FONT_SIZE = 42
+
+
+def _load_captcha_font(size: int):
+    """加载验证码字体：优先 TrueType，回退到 Pillow 内置【可缩放】默认字体。
+    Load a captcha font: prefer TrueType, else Pillow's scalable built-in default.
+
+    关键 / Why: ``ImageFont.truetype("Arial", ...)`` 在 slim 容器里没有 Arial 会抛错，
+    旧代码回退到 ``load_default()`` 的极小位图字体——这正是验证码又小又细的根因。
+    """
+    for path in (
+        "DejaVuSans-Bold.ttf",
+        "DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/Library/Fonts/Arial.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, IOError):
+            continue
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1：可缩放默认字体
+    except TypeError:  # 老版本仅有固定小字号
+        return ImageFont.load_default()
 
 
 def generate_captcha() -> tuple[str, str, str]:
@@ -32,19 +56,17 @@ def generate_captcha() -> tuple[str, str, str]:
     image = Image.new("RGB", (_IMG_WIDTH, _IMG_HEIGHT), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
 
-    # 尝试使用系统字体，不可用时使用默认字体
-    try:
-        font = ImageFont.truetype("Arial", 32)
-    except (OSError, IOError):
-        font = ImageFont.load_default()
+    font = _load_captcha_font(_FONT_SIZE)
 
-    # 绘制字符（带随机偏移和颜色）
-    x_offset = 15
+    # 绘制字符（更大字号 + 均匀分布 + 随机偏移和颜色）
+    # Draw the characters with a larger font, even spacing, and slight jitter.
+    char_gap = (_IMG_WIDTH - 24) // _CAPTCHA_LENGTH
+    x_offset = 14
     for ch in answer:
-        color = (random.randint(0, 150), random.randint(0, 150), random.randint(0, 150))
-        y_offset = random.randint(5, 15)
+        color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
+        y_offset = random.randint(2, 14)
         draw.text((x_offset, y_offset), ch, fill=color, font=font)
-        x_offset += 28
+        x_offset += char_gap
 
     # 绘制干扰线
     for _ in range(5):

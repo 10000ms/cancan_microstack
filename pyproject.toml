@@ -45,7 +45,7 @@ dependencies = [
     "jmespath>=1.0.0,<2.0.0",    # JSON 查询 / JSON querying
     # 已发布到 PyPI 的姊妹库 / sibling libraries published to PyPI
     "dragonfly-container[all]>=0.0.1",
-    "linglong-web[all]>=0.0.1",
+    "linglong-web[all]>=0.0.2",
 ]
 
 [project.optional-dependencies]

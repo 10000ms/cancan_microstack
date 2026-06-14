@@ -3,7 +3,7 @@
 __title__ = "cancan-microstack"
 __description__ = "Infrastructure microservice bundle providing controllersrv/infrasrv/opsbffsrv, assets, and orchestration tooling"
 __url__ = "https://github.com/10000ms/cancan_microstack"
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 __author__ = "Victor Lai"
 __author_email__ = "victor.lai@foxmail.com"
 __license__ = "MIT"

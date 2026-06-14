@@ -140,7 +140,7 @@ class _BaseConfig(LinglongConfigBase):
     # Default true in production (session cookie only over HTTPS); override via env (e.g. "false" for local http).
     AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "true")
     AUTH_TOTP_ISSUER = os.getenv("AUTH_TOTP_ISSUER", "OPS Admin")
-    AUTH_REDIS_URL = os.getenv("AUTH_REDIS_URL", "redis://redis.service:6379/0")
+    AUTH_REDIS_URL = os.getenv("AUTH_REDIS_URL", "redis://redis.internal:6379/0")
 
     # 代理接口跨域白名单（逗号分隔的 Origin），默认空 = 仅同源。
     # 用于 RabbitMQ 等管理 UI 代理；绝不反射任意 Origin + 带凭证。
