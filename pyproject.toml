@@ -64,6 +64,7 @@ Repository = "https://github.com/10000ms/cancan_microstack"
 
 [tool.setuptools]
 zip-safe = false
+include-package-data = true
 package-dir = {"cancan_microstack" = "."}
 packages = [
     "cancan_microstack",

@@ -7,3 +7,7 @@ prune build
 prune dist
 exclude .coverage
 exclude coverage.xml
+
+# 显式纳入随包资产（含 dotfile）与类型标记
+graft assets
+include py.typed

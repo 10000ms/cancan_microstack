@@ -179,7 +179,7 @@ def _seed_env_file(workspace: Path, stack: CancanMicrostack) -> None:
     if env_path.exists():
         return
     try:
-        template = stack.assets.read_text("env/.env.example")
+        template = stack.assets.read_text("env/env.example")
     except Exception:
         return
 
@@ -243,7 +243,7 @@ def _bootstrap_workspace_files(workspace: Path, stack: CancanMicrostack) -> None
 
     # Export the env template and seed a workspace .env (with a fresh TOTP key) when missing.
     # 导出 env 模板；缺失时生成带新鲜 TOTP 密钥的工作区 .env（供 compose 注入凭据/密钥）。
-    _export_asset_if_missing("env/.env.example", workspace / ".env.example")
+    _export_asset_if_missing("env/env.example", workspace / ".env.example")
     _seed_env_file(workspace, stack)
 
     # Export adminops frontend into workspace for Caddy to serve.
